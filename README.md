@@ -60,9 +60,8 @@ python scripts/db_sync.py          # 检查 ORM ⇄ DB 差异
 python scripts/db_sync.py --apply  # 按 ORM 自动建表/增列（幂等）
 ```
 
-以 `backend/app/db/` 下的 ORM 模型为唯一权威（详见《数据库设计.md》）。
+以 `backend/app/db/` 下的 ORM 模型为唯一权威。
 
 ## 说明
 
 - 阶段一侧重建库建表与原始文件区（上传/建夹/重命名/删除 + 导入标记）。导入标记文件级落库、文件夹级按需实时计算。
-- 更多细节见 `需求.md`、`开发.md`、`数据库设计.md`。
