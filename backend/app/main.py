@@ -22,8 +22,21 @@ async def lifespan(app: FastAPI):
     # 启动初始化：目录 + 自动建库建表（阶段一）
     from app.db import init_db
     init_db.init_all()
+    # 阶段三：启动增量同步（kb/ watchdog + 轮询兜底，FR-05）
+    _syncer = None
+    try:
+        from app.scheduler.incremental_sync import IncrementalSync
+        _syncer = IncrementalSync(settings.kb_dir)
+        _syncer.start()
+    except Exception as e:  # pragma: no cover  调度启动失败不阻断
+        log.warning("增量同步调度启动失败：%s", e)
     log.info("第二大脑后端启动于 http://%s:%s", settings.host, settings.port)
     yield
+    if _syncer is not None:
+        try:
+            _syncer.stop()
+        except Exception:  # pragma: no cover
+            pass
     log.info("第二大脑后端已关闭")
 
 

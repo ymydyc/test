@@ -34,6 +34,12 @@ CHUNK_MAX_CHARS = 800
 CHUNK_OVERLAP = 100
 
 
+def _dashscope_ready() -> bool:
+    """DashScope 是否已配置（阶段三向量/图谱启用开关）。"""
+    from app.core.config import settings
+    return bool(settings.dashscope_api_key)
+
+
 def chunk_text(
     text: str,
     max_chars: int = CHUNK_MAX_CHARS,
@@ -137,6 +143,26 @@ class KbService:
     def __init__(self, kb_dir: Path | str, raw_dir: Path | str) -> None:
         self.kb_dir = Path(kb_dir)
         self.raw_dir = Path(raw_dir)
+        self._graph: "GraphService | None" = None
+
+    @property
+    def _graph_service(self) -> "GraphService":
+        """懒加载图谱/向量服务（需 DashScope Key 才真正启用）。"""
+        if self._graph is None:
+            from app.services.graph_service import GraphService
+            self._graph = GraphService()
+        return self._graph
+
+    def _index_note(self, db: Session, note_id: int) -> None:
+        """写库/编辑后触发向量索引 + 图谱增量构建（FR-03/FR-05）。无 Key 或失败均降级不阻塞。"""
+        from app.core.config import settings
+        if not settings.dashscope_api_key:
+            return
+        try:
+            self._graph_service.build_note_vectors(db, note_id)
+            self._graph_service.build_note_graph(db, note_id)
+        except Exception as e:
+            log.warning("笔记向量/图谱构建失败（note=%s）：%s", note_id, e)
 
     # ---------- 工具 ----------
     @staticmethod
@@ -351,6 +377,7 @@ class KbService:
         self._write_note_file(note_path, md)
         self._rebuild_chunks(db, note.id, md)
         rec.import_status = 1
+        self._index_note(db, note.id)  # 写库后触发向量索引 + 图谱增量构建
         return note
 
     # ---------- 笔记 CRUD ----------
@@ -399,6 +426,7 @@ class KbService:
             if rec:
                 rec.import_status = 0  # 内容已变更，标记消失（待重写）
         db.commit()
+        self._index_note(db, n.id)  # 编辑后重做向量 + 图谱
         log.info("笔记已保存：%s（note_id=%s）", n.note_path, n.id)
         return {"note_id": n.id, "note_path": n.note_path, "import_status_reset": bool(n.origin_import_id)}
 
@@ -441,7 +469,13 @@ class KbService:
             raise FileNotFoundError("笔记不存在")
         origin_id = n.origin_import_id
         db.query(DocChunk).filter(DocChunk.note_id == n.id).delete()
-        db.query(GraphRelation).filter(GraphRelation.source_note_id == n.id).delete()
+        # 图谱关系（MySQL）+ 对应 Neo4j 关系 级联清理；再移除向量
+        self._graph_service.remove_relations_for_note(db, n.id)
+        if _dashscope_ready():
+            try:
+                self._graph_service.remove_note_vectors(db, n.id)
+            except Exception as e:
+                log.warning("向量清理失败：%s", e)
         kb_file = (self.kb_dir / n.note_path).resolve()
         if self.kb_dir.resolve() in kb_file.parents and kb_file.exists():
             kb_file.unlink()

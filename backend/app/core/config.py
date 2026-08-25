@@ -53,6 +53,7 @@ class AppConfig:
     raw_dir: Path = PROJECT_ROOT / _get("RAW_DIR", "data/raw")          # 原始文件区
     kb_dir: Path = PROJECT_ROOT / _get("KB_DIR", "data/kb")             # 知识库笔记
     input_dir: Path = PROJECT_ROOT / _get("INPUT_DIR", "data/input")    # AI 生成 md 默认目录
+    chroma_dir: Path = PROJECT_ROOT / _get("CHROMA_DIR", "data/chroma") # Chroma 向量库持久化目录
 
     # MySQL（RAG 库，启动自动建库建表）
     mysql_host: str = _get("MYSQL_HOST", "127.0.0.1")
@@ -61,19 +62,24 @@ class AppConfig:
     mysql_password: str = _get("MYSQL_PASSWORD", "root")
     mysql_db: str = _get("MYSQL_DB", "RAG")
 
-    # DashScope（阶段三/四启用，预留）
+    # DashScope（阶段三/四启用）
     dashscope_api_key: str = _get("DASHSCOPE_API_KEY", "")
-    llm_model: str = _get("DASHSCOPE_MODEL", "qwen3.7-flash")
+    # 注意：官方 DSL 模型标识为 `qwen-flash`（`qwen3.7-flash` 非官方名，接入时已对齐修正）
+    llm_model: str = _get("DASHSCOPE_MODEL", "qwen-flash")
     embedding_model: str = _get("DASHSCOPE_EMBEDDING", "text-embedding-v4")
+    embedding_dim: int = int(_get("EMBEDDING_DIM", "1024"))  # text-embedding-v4 实际维度
 
-    # Neo4j（阶段三接入，预留）
-    neo4j_uri: str = _get("NEO4J_URI", "bolt://localhost:7687")
+    # Neo4j（阶段三启用）
+    # 本机存在一个绑 127.0.0.1:7687 的本地 Neo4j 服务，会覆盖 Docker 容器的 0.0.0.0:7687；
+    # 故默认走 IPv6 回环 [::1] 直达 Docker 容器（隧道端口冲突）。
+    neo4j_uri: str = _get("NEO4J_URI", "bolt://[::1]:7687")
     neo4j_user: str = _get("NEO4J_USER", "neo4j")
     neo4j_password: str = _get("NEO4J_PASSWORD", "brain2026")
+    neo4j_database: str = _get("NEO4J_DATABASE", "neo4j")
 
     def ensure_dirs(self) -> None:
         """确保运行所需的目录存在。"""
-        for d in (self.data_dir, self.raw_dir, self.kb_dir, self.input_dir):
+        for d in (self.data_dir, self.raw_dir, self.kb_dir, self.input_dir, self.chroma_dir):
             d.mkdir(parents=True, exist_ok=True)
 
 
