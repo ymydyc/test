@@ -1,0 +1,20 @@
+# 第二大脑 后端依赖（阶段一）
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+sqlalchemy>=2.0
+pymysql>=1.1
+watchdog>=4.0
+pydantic>=2.5
+
+# 阶段二启用：多格式解析
+pypdf>=5.0
+python-docx>=1.1
+openpyxl>=3.1
+xlrd>=2.0
+html2text>=2024.0
+python-multipart>=0.0.9
+
+# 开发/测试
+pytest>=8.0
+httpx>=0.27

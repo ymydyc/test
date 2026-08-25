@@ -1,0 +1,68 @@
+# 第二大脑 · 基于 RAG 的个人知识管理系统
+
+导入原始文件区 → 选择性写入知识库 → 图谱可视化 → 右侧 AI 助手。
+
+## 功能定位
+
+| 阶段 | 内容 | 状态 |
+| --- | --- | --- |
+| 阶段一 | 项目骨架 + 原始文件导入区（FR-01） | ✅ 当前进度 |
+| 阶段二 | 选择性写入知识库 + 内容区编辑（FR-02/FR-11） | ⏳ |
+| 阶段三 | 图谱增量构建 + 混合检索底座（FR-03/04/05） | ⏳ |
+| 阶段四 | 图谱可视化 + AI 助手（FR-06/07/08） | ⏳ |
+| 阶段五 | 进阶能力 + 交付打磨（FR-09/10/12） | ⏳ |
+
+## 技术栈（固定）
+
+后端 Python/FastAPI · 前端 React + TypeScript + Vite · DashScope（`qwen3.7-flash` / `text-embedding-v4`）· Chroma · Neo4j(Docker) · MySQL(RAG) · watchdog
+
+## 环境要求
+
+- Python 3.10+
+- Node.js 18+
+- MySQL（`127.0.0.1:3306`，`root/root`，启动自动建库建表 `RAG`）
+
+## 目录结构（节选）
+
+```
+backend/     FastAPI 后端（分层：core/db/api/schemas/services/...）
+frontend/    React + TS + Vite 前端
+data/raw/    原始文件区（保留文件夹结构）
+data/kb/     知识库笔记（阶段二起用）
+data/input/  AI 生成 md 默认目录
+scripts/     start_dev.ps1 / db_sync.py
+```
+
+## 快速开始（开发）
+
+```powershell
+# 1. 配置环境变量
+copy .env.example .env   # 按需修改（阶段一只需 MySQL 配置）
+
+# 2. 安装 Python 依赖
+cd backend
+pip install -r requirements.txt
+
+# 3. 安装前端依赖
+cd ..\frontend
+npm install
+
+# 4. 启动（后端 8000 / 前端 5173，前端已代理 /api）
+.\scripts\start_dev.ps1
+```
+
+界面：打开 http://localhost:5173 查看「导入区」；后端接口文档 http://localhost:8000/docs 。
+
+## 数据库一致性
+
+```
+python scripts/db_sync.py          # 检查 ORM ⇄ DB 差异
+python scripts/db_sync.py --apply  # 按 ORM 自动建表/增列（幂等）
+```
+
+以 `backend/app/db/` 下的 ORM 模型为唯一权威（详见《数据库设计.md》）。
+
+## 说明
+
+- 阶段一侧重建库建表与原始文件区（上传/建夹/重命名/删除 + 导入标记）。导入标记文件级落库、文件夹级按需实时计算。
+- 更多细节见 `需求.md`、`开发.md`、`数据库设计.md`。

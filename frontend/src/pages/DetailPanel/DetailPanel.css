@@ -1,0 +1,247 @@
+.detail-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+
+.detail-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e6eb;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.detail-tabs button {
+  border: none;
+  background: none;
+  padding: 6px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  color: #666;
+  border-radius: 6px;
+}
+
+.detail-tabs button.active {
+  background: #e8f1ff;
+  color: #2f6fed;
+  font-weight: 600;
+}
+
+.detail-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  min-height: 0;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 240px;
+  color: #4e5969;
+  font-size: 16px;
+  text-align: center;
+  border: 1px dashed #d9dce1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.placeholder-sub {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #86909c;
+  line-height: 1.8;
+}
+
+.placeholder-sub code {
+  background: #f0f3f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* ---------- 消息条 ---------- */
+.msg {
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin: 10px 12px 0;
+  font-size: 13px;
+}
+
+.msg.error {
+  background: #fdecec;
+  color: #c0392b;
+  border: 1px solid #f5c6c6;
+}
+
+.msg.info {
+  background: #e8f1ff;
+  color: #2f6fed;
+  border: 1px solid #c6d8ff;
+}
+
+/* ---------- 编辑器 ---------- */
+.editor-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid #e5e6eb;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: #fafbfc;
+}
+
+.editor-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2329;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.editor-actions button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #d9dce1;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.editor-actions button:hover:not(:disabled) {
+  background: #f0f3f9;
+}
+
+.editor-actions button.primary {
+  background: #2f6fed;
+  border-color: #2f6fed;
+  color: #fff;
+}
+
+.editor-actions button.primary:hover:not(:disabled) {
+  background: #2b5fd6;
+}
+
+.editor-actions button.danger-ghost {
+  border-color: #f5c6c6;
+  color: #c0392b;
+}
+
+.editor-actions button.danger-ghost:hover:not(:disabled) {
+  background: #fdecec;
+}
+
+.editor-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.editor-body {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid #e5e6eb;
+  border-radius: 0 0 8px 8px;
+  background: #fff;
+  overflow: auto;
+}
+
+.editor-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #86909c;
+}
+
+/* ---------- 知识库笔记视图 ---------- */
+.kb-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.kb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 2px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2329;
+}
+
+.kb-head button {
+  padding: 6px 12px;
+  border: 1px solid #d9dce1;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.kb-head button:hover {
+  background: #f0f3f9;
+}
+
+.kb-list {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kb-item {
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.kb-item:hover {
+  border-color: #2f6fed;
+}
+
+.kb-item-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2329;
+  margin-bottom: 6px;
+}
+
+.kb-item-meta {
+  font-size: 12px;
+  color: #86909c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-item-meta code {
+  background: #f0f3f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+}

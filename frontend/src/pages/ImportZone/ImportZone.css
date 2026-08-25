@@ -1,0 +1,469 @@
+.import-zone {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.toolbar-wrap {
+  padding: 12px;
+  border-bottom: 1px solid #f0f1f3;
+  flex-shrink: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.toolbar button {
+  padding: 7px 14px;
+  border: 1px solid #d9dce1;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.toolbar button:hover {
+  background: #f0f3f9;
+}
+
+.toolbar .tip {
+  font-size: 12px;
+  color: #86909c;
+}
+
+.msg {
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.msg.error {
+  background: #fdecec;
+  color: #c0392b;
+  border: 1px solid #f5c6c6;
+}
+
+.msg.info {
+  background: #e8f1ff;
+  color: #2f6fed;
+  border: 1px solid #c6d8ff;
+}
+
+.tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.tree-title {
+  padding: 8px 12px 4px;
+  font-size: 12px;
+  color: #86909c;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tree-row:hover {
+  background: #f5f6f8;
+}
+
+.tree-row.selected {
+  background: #e8f1ff;
+}
+
+.tree-row .icon {
+  width: 18px;
+  text-align: center;
+}
+
+.tree-row .carat {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  color: #86909c;
+  cursor: pointer;
+}
+
+/* 文件行用占位对齐到文件夹"名称"列（与目录的·carat·图标·占位等宽） */
+.tree-row.file::before {
+  content: "";
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.tree-row.file {
+  padding-left: 0;
+}
+
+.tree-row .name {
+  flex: 1;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+}
+
+.badge.imported {
+  background: #e6ffef;
+  color: #00b42a;
+  border: 1px solid #b6f0c8;
+}
+
+.tree-row .actions {
+  display: none;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+.tree-row:hover .actions {
+  display: inline-flex;
+}
+
+.tree-row .actions button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.tree-row .actions button:hover {
+  background: #e5e6eb;
+}
+
+.empty {
+  padding: 40px;
+  text-align: center;
+  color: #86909c;
+}
+
+.footer-info {
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-top: 1px solid #f0f1f3;
+  font-size: 12px;
+  color: #86909c;
+}
+
+.footer-info code {
+  background: #f0f3f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* ---------- 右键菜单 ---------- */
+.ctx-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 170px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(31, 35, 41, 0.12);
+}
+
+.ctx-menu button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  color: #1f2329;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ctx-menu button:hover {
+  background: #e8f1ff;
+  color: #2f6fed;
+}
+
+.ctx-menu button.danger:hover {
+  background: #fdecec;
+  color: #c0392b;
+}
+
+.caret,
+.carat span.caret {
+  cursor: pointer;
+}
+
+/* ---------- 移动目录选择器 ---------- */
+.dir-picker {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  padding: 6px;
+}
+
+.dir-option {
+  padding: 7px 10px;
+  font-size: 13px;
+  color: #1f2329;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.dir-option:hover {
+  background: #f2f3f5;
+}
+
+.dir-option.active {
+  background: #e8f1ff;
+  color: #2f6fed;
+}
+
+.modal-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- 弹窗（输入 / 确认） ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(31, 35, 41, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-box {
+  width: 340px;
+  max-width: calc(100vw - 40px);
+  background: #fff;
+  border-radius: 10px;
+  padding: 18px;
+  box-shadow: 0 10px 30px rgba(31, 35, 41, 0.18);
+}
+
+.modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.modal-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: #86909c;
+  margin-left: 6px;
+}
+
+.modal-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid #d9dce1;
+  border-radius: 6px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.modal-input:focus {
+  outline: none;
+  border-color: #2f6fed;
+}
+
+.modal-body {
+  font-size: 14px;
+  color: #4e5969;
+  margin-bottom: 6px;
+}
+
+.modal-body code {
+  background: #f0f3f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.modal-sub.warn {
+  color: #c0392b;
+  margin: 6px 0 0;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.modal-actions button {
+  padding: 7px 16px;
+  border-radius: 6px;
+  border: 1px solid #d9dce1;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.modal-actions button.primary {
+  background: #2f6fed;
+  border-color: #2f6fed;
+  color: #fff;
+}
+
+.modal-actions button.primary:hover {
+  background: #2b5fd6;
+}
+
+.modal-actions button.danger {
+  background: #c0392b;
+  border-color: #c0392b;
+  color: #fff;
+}
+
+.modal-actions button.danger:hover {
+  background: #a93428;
+}
+
+.modal-actions button.ghost:hover {
+  background: #f0f3f9;
+}
+
+/* ---------- 多选勾选 ---------- */
+.tree-row .check {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+.tree-row .check input {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: #2f6fed;
+}
+
+/* ---------- 写入知识库 ---------- */
+.toolbar .write-btn {
+  border-color: #2f6fed;
+  color: #2f6fed;
+}
+
+.toolbar .write-btn:hover {
+  background: #e8f1ff;
+}
+
+.toolbar .write-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #fff;
+}
+
+.write-result {
+  border: 1px solid #d9dce1;
+  border-radius: 8px;
+  background: #fafbfc;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.write-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid #e5e6eb;
+  background: #fff;
+}
+
+.write-summary .ghost {
+  border: none;
+  background: none;
+  color: #86909c;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.write-list {
+  max-height: 200px;
+  overflow: auto;
+  padding: 6px 8px;
+}
+
+.write-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  flex-wrap: wrap;
+}
+
+.write-item:hover {
+  background: #f2f3f5;
+}
+
+.write-status {
+  flex-shrink: 0;
+  width: 62px;
+}
+
+.write-item.success .write-status {
+  color: #00b42a;
+}
+
+.write-item.skipped .write-status {
+  color: #86909c;
+}
+
+.write-item.error .write-status {
+  color: #c0392b;
+}
+
+.write-path {
+  color: #1f2329;
+  word-break: break-all;
+}
+
+.write-reason {
+  color: #c0392b;
+}
+
+.write-note {
+  color: #86909c;
+}
+
+.write-children {
+  flex-basis: 100%;
+  padding-left: 16px;
+  border-left: 1px solid #e5e6eb;
+  margin-left: 6px;
+}

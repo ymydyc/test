@@ -1,0 +1,38 @@
+# 环境与密钥
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / 前端
+node_modules/
+dist/
+*.local
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# 运行时数据（不入版控）
+data/raw/
+data/kb/
+data/input/
+data/chroma/
+data/neo4j/
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 内部会话记录（隐私，不入版控）
+会话*.txt

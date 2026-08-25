@@ -1,0 +1,72 @@
+:root {
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  color: #1f2329;
+  background: #f5f6f8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  height: 52px;
+  padding: 0 20px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e6eb;
+}
+
+.app-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.app-nav button {
+  border: none;
+  background: none;
+  padding: 6px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  color: #666;
+  border-radius: 6px;
+}
+
+.app-nav button.active {
+  background: #e8f1ff;
+  color: #2f6fed;
+  font-weight: 600;
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  min-height: 0; /* 允许子元素内部滚动 */
+}
+
+.app-sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  border-right: 1px solid #e5e6eb;
+  background: #fff;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-detail {
+  flex: 1;
+  min-width: 0;
+  background: #f5f6f8;
+}
