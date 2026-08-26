@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as assistantApi from "../../api/assistant";
 import type { AssistantSession, ChatMessageItem, Citation } from "../../types";
+import MarkdownView from "./MarkdownView";
 import "./AssistantPanel.css";
 
 interface AssistantPanelProps {
@@ -10,8 +11,6 @@ interface AssistantPanelProps {
 const DEFAULT_WIDTH = 380;
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 760;
-
-type ToolKind = "md" | null;
 
 export default function AssistantPanel({ onClose }: AssistantPanelProps) {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -24,9 +23,6 @@ export default function AssistantPanel({ onClose }: AssistantPanelProps) {
   const [streamCites, setStreamCites] = useState<Citation[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [tool, setTool] = useState<ToolKind>(null);
-  const [toolValue, setToolValue] = useState("");
-  const [runningTool, setRunningTool] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [showList, setShowList] = useState(false);
@@ -195,37 +191,6 @@ export default function AssistantPanel({ onClose }: AssistantPanelProps) {
     await refreshSessions(sessionId ?? undefined);
   }
 
-  // ---------- 工具：出题 / 检索导入区 / 生成 md ----------
-  function openTool(kind: ToolKind) {
-    setTool(tool === kind ? null : kind);
-    setToolValue("");
-  }
-
-  async function runTool() {
-    if (!tool || runningTool) return;
-    setRunningTool(true);
-    setError("");
-    setNotice("");
-    const value = toolValue.trim();
-    try {
-      if (tool === "md") {
-        const digest = messages
-          .map((m) => `${m.role === "user" ? "用户" : "助手"}：${m.content}`)
-          .join("\n\n")
-          .slice(-12000);
-        const title = value || undefined;
-        const res = await assistantApi.generateMd({ content: digest || "(空会话)", title });
-        setNotice(`已生成 md：${res.path}`);
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setRunningTool(false);
-      setTool(null);
-      setToolValue("");
-    }
-  }
-
   function onStartDrag(e: React.PointerEvent<HTMLDivElement>) {
     const startX = e.clientX;
     const startW = width;
@@ -243,25 +208,29 @@ export default function AssistantPanel({ onClose }: AssistantPanelProps) {
 
   function renderMessage(m: ChatMessageItem) {
     const isLite = m.id === -1 || m.id === -Date.now();
+    const role = m.role === "user" ? "user" : "assistant";
     return (
-      <div key={m.id} className={`msg-bubble ${m.role === "user" ? "user" : "assistant"}`}>
-        {m.role === "user" ? (
-          <div className="bubble-text user-text">{m.content}</div>
-        ) : (
-          <>
-            <div className="bubble-text">{m.content}</div>
-            {m.citations && m.citations.length > 0 && (
-              <div className="citations">
-                {m.citations.map((c) => (
-                  <span className="cite" key={c.idx} title={c.note_path || c.title}>
-                    来源{c.idx}·{c.title}
-                  </span>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-        {isLite && <span className="lite-flag">●</span>}
+      <div key={m.id} className={`msg-row ${role}`}>
+        {role === "assistant" && <div className="msg-avatar">AI</div>}
+        <div className={`msg-bubble ${role}`}>
+          {role === "user" ? (
+            <div className="bubble-text user-text">{m.content}</div>
+          ) : (
+            <>
+              <MarkdownView content={m.content} />
+              {m.citations && m.citations.length > 0 && (
+                <div className="citations">
+                  {m.citations.map((c) => (
+                    <span className="cite" key={c.idx} title={c.note_path || c.title}>
+                      来源{c.idx}·{c.title}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          {isLite && <span className="lite-flag">●</span>}
+        </div>
       </div>
     );
   }
@@ -274,7 +243,9 @@ export default function AssistantPanel({ onClose }: AssistantPanelProps) {
     <div className="assistant-panel" style={{ width }}>
       <div className="resize-handle" onPointerDown={onStartDrag} title="拖拽调整宽度" />
       <div className="assistant-head">
-        <span className="assistant-title">🧠 AI 助手</span>
+        <span className="assistant-title">
+          🧠 AI 助手<span className="title-badge">知识库 · 图谱</span>
+        </span>
         <div className="assistant-head-actions">
           <button className="ghost" onClick={newSession} title="新会话">
             ＋新建
@@ -352,28 +323,6 @@ export default function AssistantPanel({ onClose }: AssistantPanelProps) {
         </div>
       )}
 
-      <div className="assistant-tools">
-        <button onClick={() => openTool("md")} disabled={busy || messages.length === 0}>
-          💾 生成 md
-        </button>
-      </div>
-
-      {tool && (
-        <div className="tool-input">
-          <input
-            autoFocus
-            placeholder="文件标题（可空）"
-            value={toolValue}
-            onChange={(e) => setToolValue(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && runTool()}
-            disabled={runningTool}
-          />
-          <button className="primary" onClick={runTool} disabled={runningTool}>
-            {runningTool ? "处理中…" : "确定"}
-          </button>
-        </div>
-      )}
-
       {(error || notice) && (
         <div className={`assistant-msg ${error ? "error" : "info"}`}>{error || notice}</div>
       )}
@@ -381,26 +330,56 @@ export default function AssistantPanel({ onClose }: AssistantPanelProps) {
       <div className="assistant-list" ref={listRef}>
         {messages.map(renderMessage)}
         {streamBuf !== "" && (
-          <div className="msg-bubble assistant streaming">
-            <div className="bubble-text">{streamBuf}</div>
-            {streamCites.length > 0 && (
-              <div className="citations">
-                {streamCites.map((c) => (
-                  <span className="cite" key={c.idx}>
-                    来源{c.idx}·{c.title}
-                  </span>
-                ))}
-              </div>
-            )}
-            <span className="stream-cursor">▌</span>
+          <div className="msg-row assistant">
+            <div className="msg-avatar">AI</div>
+            <div className="msg-bubble assistant streaming">
+              <MarkdownView content={streamBuf} />
+              {streamCites.length > 0 && (
+                <div className="citations">
+                  {streamCites.map((c) => (
+                    <span className="cite" key={c.idx}>
+                      来源{c.idx}·{c.title}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <span className="stream-cursor">▌</span>
+            </div>
           </div>
         )}
         {messages.length === 0 && streamBuf === "" && (
           <div className="assistant-empty">
-            <p>你好！我是第二大脑助手。</p>
-            <p>
-              直接在下方输入即可：提问（自动检索知识库与图谱）、让我出题、查找导入区文件或让其以导入区内容作答、生成 md 总结。我会根据问题自动决定检索范围。
+            <div className="empty-orb">🧠</div>
+            <p className="empty-title">你好，我是第二大脑助手</p>
+            <p className="empty-sub">
+              基于你的知识库与知识图谱作答。需要生成文档时，直接说「把……整理成文档保存到导入区」即可。可尝试：
             </p>
+            <div className="empty-chips">
+              <button
+                onClick={() => {
+                  setInput("请结合知识库和知识图谱，总结我知识库的主要内容");
+                  setShowList(false);
+                }}
+              >
+                总结知识库
+              </button>
+              <button
+                onClick={() => {
+                  setInput("基于知识库出 3 道复习题并给出答案要点");
+                  setShowList(false);
+                }}
+              >
+                出一组复习题
+              </button>
+              <button
+                onClick={() => {
+                  setInput("帮我把最近导入的文件内容整理成学习笔记");
+                  setShowList(false);
+                }}
+              >
+                整理学习笔记
+              </button>
+            </div>
           </div>
         )}
       </div>

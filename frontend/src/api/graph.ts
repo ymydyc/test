@@ -45,3 +45,21 @@ export async function buildGraph(
   });
   return handle(res);
 }
+
+/** 删除实体节点及其全部关系（MySQL 权威 + Neo4j 同步） */
+export async function deleteGraphNode(name: string): Promise<{ name: string; deleted: boolean }> {
+  const res = await fetch(`${BASE}/node/${encodeURIComponent(name)}`, { method: "DELETE" });
+  return handle(res);
+}
+
+/** 删除指定图谱关系边（MySQL 权威 + Neo4j 同步） */
+export async function deleteGraphRelation(
+  payload: { source: string; target: string; relation_type: string },
+): Promise<{ source: string; target: string; relation_type: string; deleted: boolean }> {
+  const res = await fetch(`${BASE}/relation/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handle(res);
+}

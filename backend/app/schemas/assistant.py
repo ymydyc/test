@@ -28,4 +28,4 @@ class RetrieveImportRequest(BaseModel):
 class GenerateMdRequest(BaseModel):
     content: str = Field(..., min_length=1, max_length=200_000, description="要落盘的 Markdown 正文")
     title: str | None = Field(None, max_length=200, description="生成文件主名（缺省用时间戳）")
-    target_subpath: str | None = Field(None, max_length=300, description="相对 input_dir 的子路径；缺省直接写入 input_dir")
+    target_subpath: str | None = Field(None, max_length=300, description="相对导入区(raw/)的子路径；位置需已存在，缺省或位置不存在时写入默认 output/")

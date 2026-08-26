@@ -29,7 +29,10 @@ log = get_logger("services.graph")
 
 # 实体去重相似度阈值（向量匹配全局实体，相同概念合并，避免节点膨胀）
 ENTITY_MERGE_THRESHOLD = 0.86
-EXTRACT_MAX_CHARS = 6000  # 抽取时传给 LLM 的内容上限
+# 单次传给 LLM 抽取的内容上限（超过则分块抽取再合并，保证长笔记实体/关系不被截断遗漏）
+EXTRACT_MAX_CHARS = 6000
+# 分块间重叠字符数，保证跨块边界处的实体间关系不会被截断漏抽
+EXTRACT_CHUNK_OVERLAP = 400
 
 
 class GraphService:
@@ -88,8 +91,8 @@ class GraphService:
         if note is None:
             return {"status": "error", "reason": "笔记不存在"}
         content = note.content_md or ""
-        extracted = self._extract(content[:EXTRACT_MAX_CHARS])
-        if not extracted:
+        extracted = self._extract_all(content)
+        if not extracted or (not extracted["entities"] and not extracted["relations"]):
             return {"status": "skipped", "reason": "无可抽取实体"}
 
         # 先移除该笔记旧的独占关系（MySQL+Neo4j），再做增量重建
@@ -136,6 +139,50 @@ class GraphService:
             "entities": data.get("entities", []) or [],
             "relations": data.get("relations", []) or [],
         }
+
+    @staticmethod
+    def _chunk_content(content: str, max_chars: int = EXTRACT_MAX_CHARS,
+                       overlap: int = EXTRACT_CHUNK_OVERLAP) -> list[str]:
+        """按字符上限分块（带重叠），返回各块文本；短文本仅一块。"""
+        content = content or ""
+        if len(content) <= max_chars:
+            return [content]
+        chunks: list[str] = []
+        start = 0
+        while start < len(content):
+            end = min(start + max_chars, len(content))
+            chunks.append(content[start:end])
+            if end >= len(content):
+                break
+            start = max(start + 1, end - overlap)
+        return chunks
+
+    def _extract_all(self, content: str) -> dict:
+        """分块抽取并跨块合并：实体按同名合并，关系全部汇总，再统一建边。
+
+        相比单次截断前 6000 字符，长笔记不再遗漏后段实体/关系；跨块边界处通过重叠
+        和跨块实体名映射，让后块的关系也能正确连到已抽取的实体。
+        """
+        entities: dict[str, dict] = {}
+        relations: list[dict] = []
+        for chunk in self._chunk_content(content):
+            res = self._extract(chunk)
+            if not res:
+                continue
+            for ent in res["entities"]:
+                name = (ent.get("name") or "").strip()
+                if not name:
+                    continue
+                cur = entities.get(name)
+                if cur is None:
+                    entities[name] = ent
+                else:
+                    if not cur.get("entity_type") and ent.get("entity_type"):
+                        cur["entity_type"] = ent["entity_type"]
+                    if not cur.get("description") and ent.get("description"):
+                        cur["description"] = ent["description"]
+            relations.extend(res["relations"])
+        return {"entities": list(entities.values()), "relations": relations}
 
     @staticmethod
     def _parse_json(text: str) -> dict:
@@ -247,6 +294,53 @@ class GraphService:
         """笔记删除后的下游清理：向量 + 该笔记图谱关系（Neo4j）。孤立实体由调用方按 _cleanup_orphan_entities 决定。"""
         self.remove_note_vectors(db, note_id)
         self.remove_relations_for_note(db, note_id)
+
+    # ================= 图谱删除 =================
+    def delete_entity(self, db: Session, name: str) -> dict:
+        """删除实体节点：先清其全部关系（MySQL 权威 + Neo4j），再删实体、移除实体向量。"""
+        ent = db.query(GraphEntity).filter(GraphEntity.name == name).first()
+        if ent is None:
+            raise FileNotFoundError("实体不存在")
+        eid = ent.id
+        db.query(GraphRelation).filter(
+            (GraphRelation.source_entity_id == eid) | (GraphRelation.target_entity_id == eid)
+        ).delete()
+        db.delete(ent)
+        db.commit()
+        if self.graph_available():
+            try:
+                self.graph.detach_entity(name)
+            except Exception as e:
+                log.warning("Neo4j 实体删除失败：%s", e)
+        try:
+            self.vs.delete(ENTITY_COLLECTION, [f"ent:{eid}"])
+        except Exception as e:
+            log.warning("实体向量删除失败：%s", e)
+        log.info("图谱实体已删除：%s", name)
+        return {"name": name, "deleted": True}
+
+    def delete_relation(self, db: Session, source: str, target: str, relation_type: str) -> dict:
+        """删除指定关系边（MySQL 权威 + Neo4j 同步）。"""
+        s = db.query(GraphEntity).filter(GraphEntity.name == source).first()
+        t = db.query(GraphEntity).filter(GraphEntity.name == target).first()
+        if s is None or t is None:
+            raise FileNotFoundError("关联实体不存在")
+        rel = db.query(GraphRelation).filter(
+            GraphRelation.source_entity_id == s.id,
+            GraphRelation.target_entity_id == t.id,
+            GraphRelation.relation_type == relation_type,
+        ).first()
+        if rel is None:
+            raise FileNotFoundError("关系不存在")
+        db.delete(rel)
+        db.commit()
+        if self.graph_available():
+            try:
+                self.graph.remove_relation(source, target, relation_type)
+            except Exception as e:
+                log.warning("Neo4j 关系删除失败：%s", e)
+        log.info("图谱关系已删除：%s→%s·%s", source, target, relation_type)
+        return {"source": source, "target": target, "relation_type": relation_type, "deleted": True}
 
     # ---------- 工具 ----------
     @staticmethod

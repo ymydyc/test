@@ -3,6 +3,7 @@ import * as api from "../../api/importFiles";
 import * as advancedApi from "../../api/advanced";
 import * as kbApi from "../../api/kb";
 import type { KbWriteResponse, KbWriteResult, TreeNode } from "../../types";
+import LoadingOverlay from "../../components/LoadingOverlay";
 import "./ImportZone.css";
 
 const INDENT = 16;
@@ -56,6 +57,7 @@ export default function ImportZone({ onSelectFile, onDataChanged }: ImportZonePr
   const [checked, setChecked] = useState<string[]>([]); // 勾选写入知识库的路径集合
   const [writeResult, setWriteResult] = useState<KbWriteResponse | null>(null);
   const [writing, setWriting] = useState(false);
+  const [uploading, setUploading] = useState(false); // 导入文档中
   const [clipOpen, setClipOpen] = useState(false);
   const [clipUrl, setClipUrl] = useState("");
   const [clipping, setClipping] = useState(false);
@@ -107,14 +109,16 @@ export default function ImportZone({ onSelectFile, onDataChanged }: ImportZonePr
   function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     if (!files.length) return;
+    setUploading(true);
+    setError("");
     api
       .uploadFiles(files, files.map((f) => f.name), selectedPath)
       .then((res) => {
-        setNotice(res.message);
-        setError("");
+        setNotice(res.message || `${files.length} 个文件导入成功`);
         load();
       })
-      .catch((err) => setError((err as Error).message));
+      .catch((err) => setError((err as Error).message))
+      .finally(() => setUploading(false));
     e.target.value = "";
   }
 
@@ -509,6 +513,10 @@ export default function ImportZone({ onSelectFile, onDataChanged }: ImportZonePr
           </div>
         </div>
       )}
+
+      {/* 阻塞式加载提示：导入文档 / 写入知识库（未完成前禁止其他操作） */}
+      <LoadingOverlay show={uploading} message="正在导入文档…" />
+      <LoadingOverlay show={writing} message="正在写入知识库…" />
     </div>
   );
 }

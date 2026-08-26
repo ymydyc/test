@@ -3,6 +3,7 @@ import cytoscape, { type Core, type EventObject, type ElementDefinition } from "
 import * as graphApi from "../../api/graph";
 import { listNotes } from "../../api/kb";
 import type { GraphEdge, GraphNode, GraphNodeDetail } from "../../types";
+import LoadingOverlay from "../../components/LoadingOverlay";
 import "./GraphView.css";
 
 const TYPE_COLORS: Record<string, string> = {
@@ -22,6 +23,27 @@ const KEEP_NEIGHBOR_DEPTH = 1;
 function colorFor(type?: string): string {
   if (type && TYPE_COLORS[type]) return TYPE_COLORS[type];
   return "#64748b";
+}
+
+/**
+ * 费马螺旋圆形打包（sunflower / 圆形堆积）：
+ * 把全部节点按近似均匀密度铺进一个实心圆盘——中心密、外围疏，无空洞、无直线、无同心环，
+ * 保证"所有节点聚成一个紧凑球状"。相比基础 force-directed，
+ * 力导向对孤立/稀疏节点只会把它们排到同一平衡半径绕成一圈，
+ * 这里用几何打包从根上避免"排成直线"，且之后仍可手动拖拽。
+ */
+function layoutCirclePack(cy: Core) {
+  const nodes = cy.nodes();
+  const n = nodes.length;
+  if (n === 0) return;
+  const spacing = 34; // 相邻节点圆心间距（节距），随节点大小/标签可调
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5)); // 约 137.5°，均匀铺点点位
+  nodes.forEach((node, i) => {
+    const r = spacing * Math.sqrt(i);
+    const theta = i * goldenAngle;
+    node.position({ x: r * Math.cos(theta), y: r * Math.sin(theta) });
+  });
+  cy.fit(cy.elements(), 60);
 }
 
 type SearchMode = "fuzzy" | "exact";
@@ -53,6 +75,12 @@ export default function GraphView() {
     relation_type: string;
     description?: string;
   } | null>(null);
+  // 图谱删除：确认弹窗 + 删除中状态
+  const [confirmDelete, setConfirmDelete] = useState<{
+    kind: "node" | "edge";
+    label: string;
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // ---- 过滤/搜索状态 ----
   const [query, setQuery] = useState("");
@@ -139,7 +167,8 @@ export default function GraphView() {
       cy.elements().remove();
       if (elements.length === 0) return;
       cy.add(elements);
-      cy.layout({ name: "cose", animate: true, animationDuration: 450, animateFilter: () => true }).run();
+      // 费马螺旋圆形打包：所有节点聚成紧凑实心球状（中心密、外围疏，无直线/无同心环）
+      layoutCirclePack(cy);
     },
     [],
   );
@@ -190,8 +219,10 @@ export default function GraphView() {
           },
         },
       ],
-      layout: { name: "cose", animate: true },
-      wheelSensitivity: 0.225,
+      layout: {
+        name: "preset",
+      },
+      wheelSensitivity: 0.45,
       boxSelectionEnabled: true,
       autoungrabify: false,
     });
@@ -218,8 +249,8 @@ export default function GraphView() {
 
     // ---------- Neo4j 式联动拖拽：拖动节点时，其关联节点整体跟随 ----------
     ci.on("grab", "node", (ev: EventObject) => {
-      // 停止正在运行的布局：cosen 布局的力导向会持续推动邻居，若与手动位移同时作用，
-      // 会使关联节点"飞出去"（幅度超过被拖动节点）。先 ci.stop() 再进入纯手动拖拽。
+      // 先停掉可能在跑的布局动画（尤其布局动画尚未完成时），避免其与手动位移互相干扰；
+      // 之后再进入纯手动拖拽，保证关联节点跟随幅度不超过被拖动节点。
       ci.stop();
       const node = ev.target as cytoscape.NodeSingular;
       const links: { node: cytoscape.NodeSingular; depth: number; base: { x: number; y: number } }[] = [];
@@ -331,6 +362,32 @@ export default function GraphView() {
       else next.add(type);
       return next;
     });
+  }
+
+  // ---------- 图谱删除（节点 / 关系边） ----------
+  async function onConfirmDelete() {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    setError("");
+    try {
+      if (confirmDelete.kind === "node" && selected) {
+        await graphApi.deleteGraphNode(selected.name);
+        setSelected(null);
+      } else if (confirmDelete.kind === "edge" && selectedEdge) {
+        await graphApi.deleteGraphRelation({
+          source: selectedEdge.source,
+          target: selectedEdge.target,
+          relation_type: selectedEdge.relation_type,
+        });
+        setSelectedEdge(null);
+      }
+      setConfirmDelete(null);
+      await loadGraph();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const totalNodes = allNodes.length;
@@ -468,6 +525,13 @@ export default function GraphView() {
               )}
             </div>
             <div className="modal-actions">
+              <button
+                className="danger"
+                onClick={() => setConfirmDelete({ kind: "node", label: selected.name })}
+                title="删除该实体节点及其全部关联关系"
+              >
+                🗑 删除实体
+              </button>
               <button className="ghost" onClick={() => setSelected(null)}>
                 关闭
               </button>
@@ -488,6 +552,18 @@ export default function GraphView() {
               {selectedEdge.description && <p className="graph-desc">{selectedEdge.description}</p>}
             </div>
             <div className="modal-actions">
+              <button
+                className="danger"
+                onClick={() =>
+                  setConfirmDelete({
+                    kind: "edge",
+                    label: `${selectedEdge.source} —${selectedEdge.relation_type}→ ${selectedEdge.target}`,
+                  })
+                }
+                title="删除该关系边"
+              >
+                🗑 删除关系
+              </button>
               <button className="ghost" onClick={() => setSelectedEdge(null)}>
                 关闭
               </button>
@@ -495,6 +571,35 @@ export default function GraphView() {
           </div>
         </div>
       )}
+
+      {confirmDelete && (
+        <div className="modal-overlay" onClick={() => setConfirmDelete(null)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">
+              {confirmDelete.kind === "node" ? "删除实体" : "删除关系"}
+            </div>
+            <div className="modal-body">
+              确认删除 <code>{confirmDelete.label}</code> ？
+              <div className="modal-sub warn">
+                {confirmDelete.kind === "node"
+                  ? "将删除该实体节点及其全部关联关系，不可恢复。"
+                  : "将删除该关系边，不可恢复。"}
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="ghost" onClick={() => setConfirmDelete(null)} disabled={deleting}>
+                取消
+              </button>
+              <button className="danger" onClick={onConfirmDelete} disabled={deleting}>
+                {deleting ? "删除中…" : "删除"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 阻塞式加载提示：生成图谱（未完成前禁止其他操作） */}
+      <LoadingOverlay show={buildGraphing} message={buildGraphing ? "正在生成图谱…" : ""} />
     </div>
   );
 }

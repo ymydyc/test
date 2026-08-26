@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.engine import get_db
-from app.schemas.kb import SaveFileRequest, SaveNoteRequest, WriteRequest
+from app.schemas.kb import BulkNotesDeleteRequest, SaveFileRequest, SaveNoteRequest, WriteRequest
 from app.services.import_service import PathSafetyError
 from app.services.kb_service import KbService
 from app.parsers.base import ParseError
@@ -66,6 +66,14 @@ def delete_note(note_id: int, db: Session = Depends(get_db)):
         raise _as_http(e, 404) from e
     except Exception as e:  # pragma: no cover
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/notes/bulk-delete", summary="批量删除笔记（逐条级联清理，缺失跳过）")
+def bulk_delete_notes(payload: BulkNotesDeleteRequest, db: Session = Depends(get_db)):
+    try:
+        return _service().bulk_delete_notes(db, payload.note_ids)
+    except Exception as e:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"批量删除失败：{e}") from e
 
 
 @router.get("/preview", summary="解析导入区文件为 Markdown（内容区预览/编辑底稿）")

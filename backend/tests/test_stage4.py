@@ -106,25 +106,35 @@ def test_retrieve_import_by_keyword(svc, db, dirs):
     assert empty["files"] == []
 
 
-# ---------- 生成 md（默认 input + 防穿越） ----------
-def test_generate_md_writes_to_input(svc, db, dirs):
-    _, indir = dirs
+# ---------- 生成 md（写入导入区 raw/，默认 output/ + 防穿越） ----------
+def test_generate_md_writes_to_default_output(svc, db, dirs):
+    raw, _ = dirs
     res = svc.generate_md(db, "# 总结\n\n这是一份总结", title="周报 2026")
     assert res["ok"] is True
-    target = indir / "周报_2026.md"
+    target = raw / "output" / "周报_2026.md"
     assert target.exists()
     assert target.read_text(encoding="utf-8") == "# 总结\n\n这是一份总结"
 
 
-def test_generate_md_subpath(svc, db, dirs):
-    _, indir = dirs
+def test_generate_md_subpath_exists(svc, db, dirs):
+    raw, _ = dirs
+    (raw / "nested" / "deep").mkdir(parents=True)
     res = svc.generate_md(db, "正文", title="子", target_subpath="nested/deep")
-    assert (indir / "nested" / "deep" / "子.md").exists()
+    assert (raw / "nested" / "deep" / "子.md").exists()
     assert "nested" in res["path"] and "deep" in res["path"]
 
 
+def test_generate_md_fallback_output_when_subpath_missing(svc, db, dirs):
+    raw, _ = dirs
+    # 用户指定位置不存在 → 回退默认 output/
+    res = svc.generate_md(db, "正文", title="子", target_subpath="nested/deep")
+    assert res["ok"] is True
+    assert not (raw / "nested").exists()
+    assert (raw / "output" / "子.md").exists()
+
+
 def test_generate_md_blocks_path_traversal(svc, db, dirs):
-    # 向上跳出默认目录被拦截（防路径穿越）
+    # 向上跳出导入区被拦截（防路径穿越）
     with pytest.raises(ValueError):
         svc.generate_md(db, "泄露", title="x", target_subpath="../escape")
     # 多层跨越同样拦截

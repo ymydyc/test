@@ -65,6 +65,28 @@
   border-radius: 4px;
 }
 
+/* 文件加载中的转圈提示 */
+.spinner {
+  display: inline-block;
+  width: 26px;
+  height: 26px;
+  border: 3px solid #dbe4ff;
+  border-top-color: #2f6fed;
+  border-radius: 50%;
+  animation: detail-spinner-rotate 0.8s linear infinite;
+  margin-bottom: 10px;
+}
+
+@keyframes detail-spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-label {
+  display: block;
+}
+
 /* ---------- 消息条 ---------- */
 .msg {
   padding: 8px 12px;
@@ -185,10 +207,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 4px 2px 12px;
   font-size: 14px;
   font-weight: 600;
   color: #1f2329;
+}
+
+.kb-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .kb-head button {
@@ -204,6 +234,31 @@
   background: #f0f3f9;
 }
 
+.kb-head button.danger-ghost {
+  border-color: #f5c6c6;
+  color: #c0392b;
+}
+
+.kb-head button.danger-ghost:hover:not(:disabled) {
+  background: #fdecec;
+}
+
+.kb-head button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.kb-check-all {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 400;
+  color: #4e5969;
+  cursor: pointer;
+  user-select: none;
+}
+
 .kb-list {
   flex: 1;
   overflow: auto;
@@ -213,16 +268,36 @@
 }
 
 .kb-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
   border: 1px solid #e5e6eb;
   border-radius: 8px;
   padding: 12px 14px;
   background: #fff;
-  cursor: pointer;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, background 0.15s;
 }
 
 .kb-item:hover {
   border-color: #2f6fed;
+}
+
+.kb-item.checked {
+  border-color: #2f6fed;
+  background: #f2f7ff;
+}
+
+.kb-item-check {
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+  cursor: pointer;
+}
+
+.kb-item-main {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
 }
 
 .kb-item-title {

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.engine import get_db
 from app.graphdb.neo4j_driver import Neo4jGraphStore
-from app.schemas.graph import GraphBuildRequest
+from app.schemas.graph import GraphBuildRequest, GraphRelationDeleteRequest
 from app.services.graph_service import GraphService
 from app.vectorstore.chroma_store import ChromaVectorStore
 
@@ -130,3 +130,25 @@ def node_detail(name: str, db: Session = Depends(get_db)):
         "name": ent.name, "entity_type": ent.entity_type, "description": ent.description,
         "source_note_ids": ent.source_note_ids, "edges": edges, "documents": docs,
     }
+
+
+@router.delete("/node/{name}", summary="删除实体节点及其全部关系（MySQL 权威 + Neo4j 同步）")
+def delete_node(name: str, db: Session = Depends(get_db)):
+    gs = _graph_service()
+    try:
+        return gs.delete_entity(db, name)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except Exception as e:  # pragma: no cover
+        raise _as_http(e)
+
+
+@router.post("/relation/delete", summary="删除指定图谱关系边（MySQL 权威 + Neo4j 同步）")
+def delete_relation(payload: GraphRelationDeleteRequest, db: Session = Depends(get_db)):
+    gs = _graph_service()
+    try:
+        return gs.delete_relation(db, payload.source, payload.target, payload.relation_type)
+    except FileNotFoundError as e:
+        raise _as_http(e, 404)
+    except Exception as e:  # pragma: no cover
+        raise _as_http(e)

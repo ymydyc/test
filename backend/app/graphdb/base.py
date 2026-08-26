@@ -37,6 +37,10 @@ class GraphStore(ABC):
         """删除某来源笔记产生的全部关系边。"""
 
     @abstractmethod
+    def remove_relation(self, source: str, target: str, relation_type: str) -> None:
+        """删除指定 (source, target, relation_type) 关系边。"""
+
+    @abstractmethod
     def detach_entity(self, name: str) -> None:
         """删除实体节点及其全部关系边。"""
 

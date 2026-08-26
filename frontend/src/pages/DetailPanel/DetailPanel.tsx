@@ -41,6 +41,10 @@ export default function DetailPanel({ selectedFile, dataVersion, graphSignal, on
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // 知识库多选删除
+  const [checkedNotes, setCheckedNotes] = useState<Set<number>>(new Set());
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const vditorRef = useRef<Vditor | null>(null);
 
   // 图谱按钮触发切换到图谱标签页
@@ -187,6 +191,50 @@ export default function DetailPanel({ selectedFile, dataVersion, graphSignal, on
     }
   }
 
+  // ---------- 知识库：多选删除 ----------
+  function toggleNoteCheck(id: number) {
+    setCheckedNotes((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleCheckAll() {
+    setCheckedNotes((prev) =>
+      prev.size === notes.length ? new Set<number>() : new Set(notes.map((n) => n.id)),
+    );
+  }
+
+  async function onConfirmBulkDeleteNotes() {
+    if (checkedNotes.size === 0) return;
+    setBulkDeleting(true);
+    setError("");
+    setNotice("");
+    try {
+      const ids = Array.from(checkedNotes);
+      const res = await kbApi.bulkDeleteNotes(ids);
+      const failed = res.results.filter((r) => r.status === "error").length;
+      setNotice(
+        failed > 0
+          ? `已删除 ${res.deleted} 篇笔记，${failed} 篇删除失败`
+          : `已删除 ${res.deleted} 篇笔记（级联清理向量块与孤立实体）`,
+      );
+      setCheckedNotes(new Set());
+      if (editor?.kind === "kb" && editor.noteId != null && ids.includes(editor.noteId)) {
+        setEditor(null); // 当前正在编辑的笔记被删除 → 关闭编辑器
+      }
+      setConfirmBulkDelete(false);
+      await loadNotes();
+      onDataChanged?.();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
   // ---------- 渲染 ----------
   function renderEditor() {
     if (!editor) return null;
@@ -266,7 +314,8 @@ export default function DetailPanel({ selectedFile, dataVersion, graphSignal, on
     if (loading) {
       return (
         <div className="placeholder">
-          正在解析 {selectedFile.name}…
+          <span className="spinner" />
+          <span className="loading-label">正在解析 {selectedFile.name}…</span>
           <p className="placeholder-sub">将通过解析器转换为 Markdown。</p>
         </div>
       );
@@ -279,10 +328,30 @@ export default function DetailPanel({ selectedFile, dataVersion, graphSignal, on
     return (
       <div className="kb-view">
         <div className="kb-head">
-          <span>知识库笔记（{notes.length}）</span>
-          <button className="ghost" onClick={loadNotes}>
-            🔄 刷新
-          </button>
+          <span>
+            知识库笔记（{notes.length}
+            {checkedNotes.size > 0 ? ` · 已选 ${checkedNotes.size}` : ""}）
+          </span>
+          <span className="kb-head-actions">
+            <label className="kb-check-all" title="全选 / 取消全选">
+              <input
+                type="checkbox"
+                checked={notes.length > 0 && checkedNotes.size === notes.length}
+                onChange={toggleCheckAll}
+              />
+              全选
+            </label>
+            <button
+              className="danger-ghost"
+              disabled={checkedNotes.size === 0 || bulkDeleting}
+              onClick={() => setConfirmBulkDelete(true)}
+            >
+              {bulkDeleting ? "删除中…" : `🗑 删除选中（${checkedNotes.size}）`}
+            </button>
+            <button className="ghost" onClick={loadNotes}>
+              🔄 刷新
+            </button>
+          </span>
         </div>
         {notes.length === 0 ? (
           <div className="placeholder">
@@ -292,14 +361,27 @@ export default function DetailPanel({ selectedFile, dataVersion, graphSignal, on
         ) : (
           <div className="kb-list">
             {notes.map((n) => (
-              <div key={n.id} className="kb-item" onClick={() => openNote(n)}>
-                <div className="kb-item-title">{n.title || n.note_path}</div>
-                <div className="kb-item-meta">
-                  <code>{n.note_path}</code>
-                  {n.origin_rel_path && <span> · 来源：{n.origin_rel_path}</span>}
-                  {n.updated_at && (
-                    <span> · 更新：{n.updated_at.replace("T", " ").slice(0, 19)}</span>
-                  )}
+              <div key={n.id} className={`kb-item${checkedNotes.has(n.id) ? " checked" : ""}`}>
+                <span
+                  className="kb-item-check"
+                  onClick={(e) => e.stopPropagation()}
+                  title="勾选以批量删除"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checkedNotes.has(n.id)}
+                    onChange={() => toggleNoteCheck(n.id)}
+                  />
+                </span>
+                <div className="kb-item-main" onClick={() => openNote(n)}>
+                  <div className="kb-item-title">{n.title || n.note_path}</div>
+                  <div className="kb-item-meta">
+                    <code>{n.note_path}</code>
+                    {n.origin_rel_path && <span> · 来源：{n.origin_rel_path}</span>}
+                    {n.updated_at && (
+                      <span> · 更新：{n.updated_at.replace("T", " ").slice(0, 19)}</span>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -348,6 +430,27 @@ export default function DetailPanel({ selectedFile, dataVersion, graphSignal, on
               </button>
               <button className="danger" onClick={onConfirmDeleteNote} disabled={saving}>
                 删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    {confirmBulkDelete && checkedNotes.size > 0 && (
+        <div className="modal-overlay" onClick={() => setConfirmBulkDelete(false)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">批量删除笔记</div>
+            <div className="modal-body">
+              确认删除选中的 <code>{checkedNotes.size}</code> 篇笔记 ？
+              <div className="modal-sub warn">
+                将逐篇级联清理其向量块与孤立实体（共享实体保留），不可恢复。
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="ghost" onClick={() => setConfirmBulkDelete(false)}>
+                取消
+              </button>
+              <button className="danger" onClick={onConfirmBulkDeleteNotes} disabled={bulkDeleting}>
+                {bulkDeleting ? "删除中…" : "删除"}
               </button>
             </div>
           </div>

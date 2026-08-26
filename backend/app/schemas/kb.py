@@ -15,3 +15,7 @@ class SaveNoteRequest(BaseModel):
 class SaveFileRequest(BaseModel):
     rel_path: str = Field(..., description="导入区文件相对路径")
     content: str = Field(..., description="编辑后的文本内容")
+
+
+class BulkNotesDeleteRequest(BaseModel):
+    note_ids: list[int] = Field(..., min_length=1, description="待批量删除的笔记 id 集合")

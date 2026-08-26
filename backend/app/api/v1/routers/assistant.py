@@ -6,7 +6,7 @@
 - POST /assistant/chat/stream                 流式对话（SSE）
 - POST /assistant/questions                   出题
 - POST /assistant/retrieve-import             检索原始文件区
-- POST /assistant/generate-md                 生成 md（默认 ./input/）
+- POST /assistant/generate-md                 生成 md 到导入区（默认 raw/output/）
 """
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ def retrieve_import(payload: RetrieveImportRequest, db: Session = Depends(get_db
     return _svc().retrieve_import(db, payload.query, payload.limit)
 
 
-@router.post("/generate-md", summary="把内容/对话总结为 md（默认 ./input/）")
+@router.post("/generate-md", summary="把内容/对话总结为 md（到导入区，默认 raw/output/）")
 def generate_md(payload: GenerateMdRequest, db: Session = Depends(get_db)):
     try:
         return _svc().generate_md(db, payload.content, payload.title, payload.target_subpath)

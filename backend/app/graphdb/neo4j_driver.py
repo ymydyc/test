@@ -93,6 +93,13 @@ class Neo4jGraphStore(GraphStore):
             {"sn": source_note_id},
         )
 
+    def remove_relation(self, source: str, target: str, relation_type: str) -> None:
+        self._run(
+            "MATCH (a:Entity {name: $s})-[r:RELATES_TO {relation_type: $rt}]->(b:Entity {name: $t}) "
+            "DELETE r",
+            {"s": source, "t": target, "rt": relation_type},
+        )
+
     def detach_entity(self, name: str) -> None:
         self._run(
             "MATCH (e:Entity {name: $name}) DETACH DELETE e", {"name": name},

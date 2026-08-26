@@ -489,6 +489,23 @@ class KbService:
         log.info("笔记已删除：note_id=%s", note_id)
         return {"note_id": note_id, "deleted": True}
 
+    def bulk_delete_notes(self, db: Session, note_ids: list[int]) -> dict:
+        """批量删除笔记（复用 delete_note，逐条级联清理；缺失跳过，单条失败不中断整体）。"""
+        deleted = 0
+        results: list[dict] = []
+        for nid in note_ids:
+            try:
+                self.delete_note(db, nid)
+                deleted += 1
+                results.append({"note_id": nid, "status": "deleted"})
+            except FileNotFoundError:
+                results.append({"note_id": nid, "status": "missing"})
+            except Exception as e:  # 单条异常回滚后继续
+                db.rollback()
+                log.warning("笔记删除失败 note=%s：%s", nid, e)
+                results.append({"note_id": nid, "status": "error", "reason": str(e)})
+        return {"deleted": deleted, "results": results}
+
     def _cleanup_orphan_entities(self, db: Session, removed_note_id: int) -> None:
         """级联清理：从实体来源列表剔除已删笔记，并删除不再被任何笔记引用的"孤立实体"（共享实体保留）。"""
         for ent in db.query(GraphEntity).all():

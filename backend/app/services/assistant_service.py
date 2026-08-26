@@ -5,7 +5,8 @@
 - stream_chat：SSE 流式对话，基于混合检索（图谱 + 知识库）上下文 + 引用溯源。
 - generate_questions：根据知识库/图谱内容由 AI 出题。
 - retrieve_import：检索原始文件区（raw/）文件并读取内容（AI 工具）。
-- generate_md：把内容/对话总结落为 md，默认写入 ./input/（防路径穿越）。
+- generate_md：把内容/对话总结落为 md，写入导入区 raw/，默认落在 output/ 文件夹
+  （用户指定已存在的子路径则落到指定位置，否则回退 output/；防路径穿越）。
 
 设计约定：任何外部依赖（DashScope 等）不可用均优雅降级，不阻断（对齐 NFR-04）。
 """
@@ -206,6 +207,16 @@ class AssistantService:
         elif cat and (acc.get("plan") or {}).get("need_import"):
             # 用户只要求查看/定位导入区文件时，给出现成的实时目录
             ctx_parts.append(cat)
+
+        # 写文档工具结果：已落盘到导入区，要求模型向用户明确报告位置与内容要点
+        gen_doc = acc.get("gen_doc")
+        if gen_doc and gen_doc.get("ok"):
+            ctx_parts.append(
+                "【工具执行结果】写文档工具已成功在程序的导入区(raw/)生成文档：\n"
+                f"- 相对路径：`{gen_doc.get('path')}`\n"
+                f"- 绝对路径：`{gen_doc.get('abs_path')}`\n"
+                "请在回答中明确告知用户文档已生成、保存位置（相对路径），并简要说明文档包含的要点。"
+            )
         if ctx_parts:
             messages.append({"role": "user", "content": "\n\n".join(ctx_parts)})
         messages.append({"role": "user", "content": f"请回答（中文）：\n{message}"})
@@ -235,7 +246,7 @@ class AssistantService:
         由系统提示词约束模型实现工具调用门控。
         """
         default = {
-            "need_knowledge": True, "need_import": False,
+            "need_knowledge": True, "need_import": False, "need_create_doc": False,
             "queries": [message], "reason": "规划解析失败，回退为检索知识库",
         }
         if not settings.dashscope_api_key:
@@ -246,9 +257,12 @@ class AssistantService:
             "纯寒暄、闲聊、无需资料的问题 → need_knowledge=false。\n"
             "2) 只有当用户**明确要求**以导入区(原始文件)为依据作答，或要求查找/列出/定位/检索导入区文件时 → "
             "need_import=true；否则一律 false——即使提到某个文件名，只要没要求以导入区内容为依据，就为 false。\n"
-            "3) queries：给出 1~2 个最利于检索的中文短查询词，若无需检索则为 []。\n"
+            "3) **写文档工具门控** need_create_doc：只有当用户**明确表示**要在程序导入区(raw/)里创建/保存/生成为一个"
+            "文档/文件/笔记（如“保存到导入区”“写一份 md 放到导入区”“帮我整理成文档存到导入区 xxx 下”等）时才为 true；"
+            "如果用户只是要一段话回答、总结或方案，并未要求落成文件保存到导入区，则必须为 false。默认 false。\n"
+            "4) queries：给出 1~2 个最利于检索的中文短查询词，若无需检索则为 []。\n"
             "只输出合法 JSON，勿加多余文字，格式："
-            '{"need_knowledge": bool, "need_import": bool, "queries": ["..."], "reason": "一句话说明"}'
+            '{"need_knowledge": bool, "need_import": bool, "need_create_doc": bool, "queries": ["..."], "reason": "一句话说明"}'
         )
         hist_text = "\n".join(
             f"{'用户' if h.get('role') == 'user' else '助手'}：{(h.get('content') or '')[:500]}"
@@ -263,6 +277,7 @@ class AssistantService:
             plan = _parse_json_obj(raw)
             plan["need_knowledge"] = bool(plan.get("need_knowledge", False))
             plan["need_import"] = bool(plan.get("need_import", False))
+            plan["need_create_doc"] = bool(plan.get("need_create_doc", False))
             queries = plan.get("queries")
             plan["queries"] = [str(q) for q in (queries or []) if str(q).strip()][:2] or [message]
             return plan
@@ -349,19 +364,87 @@ class AssistantService:
         except Exception:
             return ""
 
-    # ================= 生成 md（默认 ./input/） =================
+    # ================= 写文档工具（用户明确要求在导入区生成时触发） =================
+    def _create_doc(self, db: Session, *, message: str, history: list[dict], context_blocks: list[str], import_snippets: list[str]) -> dict:
+        """由 LangGraph `create_doc` 节点调用：根据用户需求 + 已采集上下文，生成 Markdown 文档并落盘到导入区。
+
+        落盘规则（对齐 generate_md）：默认 raw/output/；用户明确指定且已存在的子路径则落到该处，
+        否则回退 output/。任何失败优雅返回 {"ok": False, "reason"} 而不阻断对话。
+        """
+        if not settings.dashscope_api_key:
+            return {"ok": False, "reason": "未配置 DASHSCOPE_API_KEY"}
+        try:
+            # 1) 提取文件名与目标位置（结构化、简短）
+            meta_sys = (
+                "你是文档落盘规划器，只做参数提取，不撰写正文。根据用户创建文档的请求，输出合法 JSON：\n"
+                '{"title": "文件主名（不含扩展名，2-40字符，自动合规化）",'
+                ' "target_subpath": "相对导入区(raw/)的子目录（用 / 分隔）；仅当用户明确指定了存放位置时才给出，否则为空字符串"}\n'
+                "注意：target_subpath 是相对导入区根目录的子路径，只表达用户点名的目录，不要带盘符或绝对路径；"
+                "用户没说位置就返回空字符串（将落到默认 output/）。"
+            )
+            meta_user = self._tool_context_prompt(message, history, context_blocks, import_snippets)
+            raw = self.llm.generate(
+                [{"role": "system", "content": meta_sys}, {"role": "user", "content": meta_user}],
+                json_mode=True, temperature=0.1,
+            )
+            meta = _parse_json_obj(raw)
+            title = str(meta.get("title") or "").strip()[:200] or "生成文档"
+            target_subpath = str(meta.get("target_subpath") or "").strip() or None
+
+            # 2) 依据上下文撰写 Markdown 正文
+            body_sys = (
+                "你是文档撰写助手。请严格依据用户的需求与下方提供的参考资料，撰写一份结构清晰、内容详实的 Markdown 文档。"
+                "使用标题、列表、要点、必要时用表格；输出纯 Markdown 正文即可，不要添加“以下是文档”之类的解释、不要使用代码围栏把整篇包起来。"
+            )
+            body = self.llm.generate(
+                [{"role": "system", "content": body_sys}, {"role": "user", "content": meta_user}],
+                temperature=0.4,
+            )
+            if not body or not body.strip():
+                return {"ok": False, "reason": "文档内容生成为空"}
+
+            # 3) 落盘到导入区（默认 output/；点位不存在时回退 output/）
+            return self.generate_md(db, body.strip(), title=title, target_subpath=target_subpath)
+        except Exception as e:
+            log.warning("写文档工具失败（降级，不阻断对话）：%s", e)
+            return {"ok": False, "reason": f"写文档失败：{e}"}
+
+    @staticmethod
+    def _tool_context_prompt(message: str, history: list[dict], context_blocks: list[str], import_snippets: list[str]) -> str:
+        """把对话历史 + 检索上下文 + 导入区片段组装成给模型撰写文档的体现。"""
+        hist_text = "\n".join(
+            f"{'用户' if h.get('role') == 'user' else '助手'}：{(h.get('content') or '')[:500]}"
+            for h in (history or [])[-6:]
+        ) or "（无历史）"
+        parts = [f"最近对话：\n{hist_text}\n", f"用户需求：\n{message}"]
+        if context_blocks:
+            parts.append("参考知识库/图谱片段（仅作依据）：\n" + "\n\n".join(context_blocks)[:16000])
+        if import_snippets:
+            parts.append("参考导入区原始文件片段（仅作依据）：\n" + "\n\n".join(import_snippets)[:8000])
+        return "\n\n".join(parts)
+
+    # ================= 生成 md（写入导入区 raw/，默认 output/） =================
     def generate_md(self, db: Session, content: str, title: str | None = None, target_subpath: str | None = None) -> dict:
-        root = settings.input_dir.resolve()
+        root = settings.raw_dir.resolve()
         root.mkdir(parents=True, exist_ok=True)
         name = _safe_basename(title) if title else datetime.now().strftime("%Y%m%d_%H%M%S")
-        sub = target_subpath or ""
-        if sub:
-            sub = sub.replace("\\", "/").lstrip("/")
-        rel = (PurePosixPath(sub) / f"{name}.md").as_posix() if sub else f"{name}.md"
+        default_sub = "output"
+
+        # 用户指定位置的候选子路径（归一化），未指定则直接用默认 output/
+        sub = ((target_subpath or "").strip().replace("\\", "/").lstrip("/")) or default_sub
+        candidate = (root / PurePosixPath(sub)).resolve()
+        # 防路径穿越：指定位置必须落在导入区之内
+        if not str(candidate).startswith(str(root)):
+            raise ValueError("不允许的路径（防路径穿越拦截）：目标超出导入区")
+        # 用户指定位置不存在时，回退到默认 output/ 文件夹
+        if not candidate.is_dir():
+            sub = default_sub
+
+        rel = (PurePosixPath(sub) / f"{name}.md").as_posix()
         target = (root / rel).resolve()
-        # 防路径穿越：目标必须落在 input_dir 之内
+        # 防路径穿越：目标必须落在导入区之内
         if not str(target).startswith(str(root)):
-            raise ValueError("不允许的路径（防路径穿越拦截）：目标超出默认目录")
+            raise ValueError("不允许的路径（防路径穿越拦截）：目标超出导入区")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         log.info("已生成 md：%s", target)

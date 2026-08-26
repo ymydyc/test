@@ -64,6 +64,18 @@ export async function deleteNote(
   return handle(res);
 }
 
+/** 批量删除笔记（逐条级联清理，缺失跳过） */
+export async function bulkDeleteNotes(
+  noteIds: number[],
+): Promise<{ deleted: number; results: { note_id: number; status: string; reason?: string }[] }> {
+  const res = await fetch(`${BASE}/notes/bulk-delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note_ids: noteIds }),
+  });
+  return handle(res);
+}
+
 /** 解析导入区文件为 Markdown（内容区预览/编辑底稿） */
 export async function previewFile(relPath: string): Promise<KbPreview> {
   const res = await fetch(`${BASE}/preview?rel_path=${encodeURIComponent(relPath)}`);
