@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../../api/importFiles";
+import * as advancedApi from "../../api/advanced";
 import * as kbApi from "../../api/kb";
 import type { KbWriteResponse, KbWriteResult, TreeNode } from "../../types";
 import "./ImportZone.css";
@@ -55,6 +56,9 @@ export default function ImportZone({ onSelectFile, onDataChanged }: ImportZonePr
   const [checked, setChecked] = useState<string[]>([]); // 勾选写入知识库的路径集合
   const [writeResult, setWriteResult] = useState<KbWriteResponse | null>(null);
   const [writing, setWriting] = useState(false);
+  const [clipOpen, setClipOpen] = useState(false);
+  const [clipUrl, setClipUrl] = useState("");
+  const [clipping, setClipping] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -112,6 +116,25 @@ export default function ImportZone({ onSelectFile, onDataChanged }: ImportZonePr
       })
       .catch((err) => setError((err as Error).message));
     e.target.value = "";
+  }
+
+  // ---------- 网页剪藏（FR-12） ----------
+  async function submitClip() {
+    const url = clipUrl.trim();
+    if (!url) return;
+    setClipping(true);
+    setError("");
+    try {
+      const res = await advancedApi.clipUrl(url, selectedPath);
+      setNotice(`剪藏成功：${res.data.name}`);
+      setClipOpen(false);
+      setClipUrl("");
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setClipping(false);
+    }
   }
 
   // ---------- 新建 / 重命名 ----------
@@ -311,6 +334,7 @@ export default function ImportZone({ onSelectFile, onDataChanged }: ImportZonePr
       <div className="toolbar-wrap">
         <div className="toolbar">
           <button onClick={() => fileInput.current?.click()}>📄 上传文件</button>
+          <button onClick={() => setClipOpen(true)} title="粘贴网页 URL，转 Markdown 存入导入区">🔗 剪藏网页</button>
           <button onClick={load}>🔄 刷新</button>
           <button className="write-btn" disabled={!checked.length || writing} onClick={handleWrite}>
             📥 写入知识库{checked.length ? `（${checked.length}）` : ""}
@@ -449,6 +473,38 @@ export default function ImportZone({ onSelectFile, onDataChanged }: ImportZonePr
             <div className="modal-actions">
               <button className="ghost" onClick={() => setConfirmNode(null)}>取消</button>
               <button className="danger" onClick={confirmDelete}>删除</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 网页剪藏弹窗（FR-12） */}
+      {clipOpen && (
+        <div className="modal-overlay" onClick={() => { setClipOpen(false); setClipUrl(""); }}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">
+              网页剪藏
+              {selectedPath && <span className="modal-sub"> 目标目录：{selectedPath}</span>}
+            </div>
+            <input
+              autoFocus
+              className="modal-input"
+              value={clipUrl}
+              placeholder="粘贴网页 URL（http/https）"
+              onChange={(e) => setClipUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitClip();
+                if (e.key === "Escape") { setClipOpen(false); setClipUrl(""); }
+              }}
+            />
+            <div className="modal-sub" style={{ margin: "8px 0 0" }}>
+              将自动提取网页正文并转为 Markdown，保存到导入区。
+            </div>
+            <div className="modal-actions">
+              <button className="ghost" onClick={() => { setClipOpen(false); setClipUrl(""); }}>取消</button>
+              <button className="primary" disabled={!clipUrl.trim() || clipping} onClick={submitClip}>
+                {clipping ? "剪藏中…" : "剪藏"}
+              </button>
             </div>
           </div>
         </div>

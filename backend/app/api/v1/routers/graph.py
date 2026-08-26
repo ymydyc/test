@@ -58,11 +58,19 @@ def export(limit: int = 1000, db: Session = Depends(get_db)):
         if health.get("ok"):
             return store.fetch_graph(limit=limit)
         # Neo4j 不可用 → 降级 MySQL 导出（图谱仍可见）
-        nodes = [{"id": e.name, "name": e.name, "entity_type": e.entity_type}
-                 for e in db.query(GraphEntity).order_by(GraphEntity.id).limit(limit).all()]
-        edges = [{"id": f"{r.source_entity_id}::{r.target_entity_id}::{r.relation_type}",
-                  "source": r.source_entity_id, "target": r.target_entity_id,
-                  "relation_type": r.relation_type} for r in db.query(GraphRelation).limit(limit).all()]
+        # 注意：节点 id 使用实体名（与 Neo4j 导出一致），边端点也必须用实体名，
+        # 否则前端 Cytoscape 会报 “nonexistent source”（此前误用实体 DB 整数 id 导致）。
+        ents = db.query(GraphEntity).order_by(GraphEntity.id).limit(limit).all()
+        nodes = [{"id": e.name, "name": e.name, "entity_type": e.entity_type} for e in ents]
+        name_by_id = {e.id: e.name for e in ents}
+        edges = []
+        for r in db.query(GraphRelation).limit(limit).all():
+            s, t = name_by_id.get(r.source_entity_id), name_by_id.get(r.target_entity_id)
+            if not s or not t:
+                continue
+            edges.append({"id": f"{s}::{t}::{r.relation_type}",
+                          "source": s, "target": t,
+                          "relation_type": r.relation_type, "description": r.description})
         return {"nodes": nodes, "edges": edges}
     except Exception as e:  # pragma: no cover
         raise _as_http(e)
@@ -86,6 +94,18 @@ def build(payload: GraphBuildRequest, db: Session = Depends(get_db)):
 @router.get("/node/{name}", summary="实体节点详情（描述、来源笔记、关联边）")
 def node_detail(name: str, db: Session = Depends(get_db)):
     from app.db.models import GraphEntity, GraphRelation, KbNote
+    # 优先 Neo4j（与 /graph/export 数据源一致，避免「图上有、库中无」时 404）
+    store = Neo4jGraphStore()
+    try:
+        if store.health().get("ok"):
+            nd = store.node_detail(name)
+            if nd is not None:
+                docs = ([{"note_id": n.id, "title": n.title, "note_path": n.note_path}
+                         for n in db.query(KbNote).filter(KbNote.id.in_(list(nd["source_note_ids"]) or [0])).all()]
+                        if nd["source_note_ids"] else [])
+                return {**nd, "documents": docs}
+    except Exception:  # Neo4j 查询异常 → 降级 MySQL
+        pass
     ent = db.query(GraphEntity).filter(GraphEntity.name == name).first()
     if ent is None:
         raise _as_http(RuntimeError("实体不存在"), 404)

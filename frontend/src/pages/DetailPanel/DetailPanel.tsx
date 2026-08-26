@@ -3,6 +3,7 @@ import type Vditor from "vditor";
 import * as kbApi from "../../api/kb";
 import type { KbNote, TreeNode } from "../../types";
 import VditorEditor from "../../components/VditorEditor";
+import GraphView from "./GraphView";
 import "./DetailPanel.css";
 
 type Tab = "content" | "kb" | "graph";
@@ -23,13 +24,15 @@ interface DetailPanelProps {
   selectedFile: TreeNode | null;
   /** 导入区/知识库数据版本号（变更时联动刷新笔记列表） */
   dataVersion: number;
+  /** 图谱按钮点击信号：值递增时切换到图谱标签页 */
+  graphSignal?: number;
   onDataChanged?: () => void;
 }
 
 /** 可直存回导入区的文本扩展名（其余文本格式仅预览，编辑请写库后改笔记） */
 const DIRECT_EDIT_EXTS = ["txt", "md", "markdown"];
 
-export default function DetailPanel({ selectedFile, dataVersion, onDataChanged }: DetailPanelProps) {
+export default function DetailPanel({ selectedFile, dataVersion, graphSignal, onDataChanged }: DetailPanelProps) {
   const [tab, setTab] = useState<Tab>("content");
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [notes, setNotes] = useState<KbNote[]>([]);
@@ -39,6 +42,11 @@ export default function DetailPanel({ selectedFile, dataVersion, onDataChanged }
   const [notice, setNotice] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const vditorRef = useRef<Vditor | null>(null);
+
+  // 图谱按钮触发切换到图谱标签页
+  useEffect(() => {
+    if (graphSignal && graphSignal > 0) setTab("graph");
+  }, [graphSignal]);
 
   const loadNotes = useCallback(async () => {
     try {
@@ -321,12 +329,7 @@ export default function DetailPanel({ selectedFile, dataVersion, onDataChanged }
       <div className="detail-body">
         {tab === "content" && renderContent()}
         {tab === "kb" && renderKb()}
-        {tab === "graph" && (
-          <div className="placeholder">
-            知识图谱显示
-            <p className="placeholder-sub">图谱区域将在阶段三（Neo4j 接入）开放。</p>
-          </div>
-        )}
+        {tab === "graph" && <GraphView />}
       </div>
 
       {confirmDelete && editor?.kind === "kb" && (

@@ -30,11 +30,24 @@ async def lifespan(app: FastAPI):
         _syncer.start()
     except Exception as e:  # pragma: no cover  调度启动失败不阻断
         log.warning("增量同步调度启动失败：%s", e)
+    # 阶段五：周期回顾调度（周记/月报，FR-09）
+    _review_scheduler = None
+    try:
+        from app.scheduler.review_scheduler import ReviewScheduler
+        _review_scheduler = ReviewScheduler()
+        _review_scheduler.start()
+    except Exception as e:  # pragma: no cover
+        log.warning("周期回顾调度启动失败：%s", e)
     log.info("第二大脑后端启动于 http://%s:%s", settings.host, settings.port)
     yield
     if _syncer is not None:
         try:
             _syncer.stop()
+        except Exception:  # pragma: no cover
+            pass
+    if _review_scheduler is not None:
+        try:
+            _review_scheduler.stop()
         except Exception:  # pragma: no cover
             pass
     log.info("第二大脑后端已关闭")

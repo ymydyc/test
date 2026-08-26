@@ -120,6 +120,44 @@ class Neo4jGraphStore(GraphStore):
             })
         return {"nodes": nodes, "edges": edges}
 
+    def node_detail(self, name: str) -> dict[str, Any] | None:
+        """实体详情（与 fetch_graph 同源，保证前端点击节点能取到详情）。
+
+        返回 {name, entity_type, description, source_note_ids, edges}；实体不存在返回 None。
+        """
+        recs = self._run(
+            "MATCH (e:Entity {name: $name}) RETURN e.name AS n, "
+            "e.entity_type AS t, e.description AS d", {"name": name}
+        )
+        if not recs:
+            return None
+        rec = recs[0]
+        edges: list[dict] = []
+        note_ids: set[int] = set()
+        # 出边 + 入边（无向展示全部关联）
+        for row in self._run(
+            "MATCH (e:Entity {name: $name})-[r:RELATES_TO]->(o:Entity) "
+            "RETURN o.name AS o, r.relation_type AS rt, r.description AS d, r.source_note_id AS sn",
+            {"name": name},
+        ):
+            edges.append({"source": rec["n"], "target": row["o"],
+                          "relation_type": row["rt"], "description": row["d"]})
+            if row["sn"] is not None:
+                note_ids.add(row["sn"])
+        for row in self._run(
+            "MATCH (i:Entity)-[r:RELATES_TO]->(e:Entity {name: $name}) "
+            "RETURN i.name AS i, r.relation_type AS rt, r.description AS d, r.source_note_id AS sn",
+            {"name": name},
+        ):
+            edges.append({"source": row["i"], "target": rec["n"],
+                          "relation_type": row["rt"], "description": row["d"]})
+            if row["sn"] is not None:
+                note_ids.add(row["sn"])
+        return {
+            "name": rec["n"], "entity_type": rec["t"], "description": rec["d"],
+            "source_note_ids": sorted(note_ids), "edges": edges,
+        }
+
     # ---------- 图谱检索（FR-04 图路径召回） ----------
     def neighbor_search(self, names: list[str], hops: int = 1, limit: int = 50) -> dict[str, list]:
         if not names:

@@ -23,6 +23,11 @@ class MoveRequest(BaseModel):
     target_dir: str = Field(..., description="目标父目录相对路径（空=移动到根目录）")
 
 
+class ClipRequest(BaseModel):
+    url: str = Field(..., description="要剪藏的网页 URL")
+    target_dir: str = Field("", description="保存到导入区的目标父目录（空=根目录）")
+
+
 class OperationResponse(BaseModel):
     ok: bool = True
     message: str = ""

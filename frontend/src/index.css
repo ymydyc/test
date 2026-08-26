@@ -49,6 +49,38 @@ body {
   font-weight: 600;
 }
 
+.app-header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-header-right button {
+  border: 1px solid #d9dce1;
+  background: #fff;
+  padding: 6px 14px;
+  font-size: 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #1f2329;
+}
+
+.app-header-right button:hover:not(:disabled) {
+  background: #f0f3f9;
+}
+
+.app-header-right button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.app-header-right button.active {
+  background: #2f6fed;
+  border-color: #2f6fed;
+  color: #fff;
+}
+
 .app-body {
   flex: 1;
   display: flex;

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from app.core.config import settings
@@ -37,12 +38,43 @@ class DashScopeClient(LLMClient):
             "messages": messages,
             "result_format": "message",
             "temperature": kwargs.get("temperature", 0.3),
+            "request_timeout": settings.llm_timeout,
         }
         response_format = kwargs.get("response_format")
         if json_mode or response_format == {"type": "json_object"}:
             params["response_format"] = {"type": "json_object"}
+        # 显式关闭连接复用：本机网络(代理/直连)下 SDK 复用 keep-alive 连接会在 TLS 握手阶段
+        # 被重置(ConnectionResetError 10054)，每次新开连接即可稳定成功。
+        params["headers"] = {"Connection": "close"}
+        return self._extract_text(dashscope.Generation.call(api_key=self.api_key, **params))
+
+    def stream(self, messages: list[dict], **kwargs) -> Iterator[str]:
+        """流式聊天补全，逐段产出增量文本（供 SSE 渲染）。"""
+        import dashscope
+
+        params: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "result_format": "message",
+            "temperature": kwargs.get("temperature", 0.5),
+            "stream": True,
+            "incremental_output": True,
+            "request_timeout": settings.llm_timeout,
+            "headers": {"Connection": "close"},
+        }
         resp = dashscope.Generation.call(api_key=self.api_key, **params)
-        return self._extract_text(resp)
+        for chunk in resp:
+            if chunk.status_code != 200:
+                raise RuntimeError(
+                    f"DashScope 流式生成失败[{chunk.code}]: {getattr(chunk, 'message', chunk)}"
+                )
+            choices = chunk.output.get("choices", [])
+            if not choices:
+                continue
+            msg = choices[0].get("message", {}) if isinstance(choices[0], dict) else getattr(choices[0], "message", {})
+            delta = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")
+            if delta:
+                yield delta
 
     @staticmethod
     def _extract_text(resp: Any) -> str:
@@ -69,6 +101,7 @@ class DashScopeClient(LLMClient):
             chunk = texts[i : i + batch]
             resp = dashscope.TextEmbedding.call(
                 api_key=self.api_key, model=self.embedding_model, input=chunk,
+                request_timeout=settings.llm_timeout,
             )
             if resp.status_code != 200:
                 raise RuntimeError(

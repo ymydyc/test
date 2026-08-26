@@ -27,6 +27,10 @@ def _load_dotenv(path: Path) -> None:
 
 _load_dotenv(PROJECT_ROOT / ".env")
 
+# 本机存在一个不可靠的注册表 HTTP 代理(现状 127.0.0.1:12450)，会让外联 SSL 偶发重置(10054)。
+# 统一绕过代理走直连，保证 DashScope/Neo4j 等出站稳定（与验收脚本 trust_env=False 同思路）。
+os.environ.setdefault("NO_PROXY", "*")
+
 
 def _get(key: str, default: str) -> str:
     return os.environ.get(key, default)
@@ -59,7 +63,7 @@ class AppConfig:
     mysql_host: str = _get("MYSQL_HOST", "127.0.0.1")
     mysql_port: int = int(_get("MYSQL_PORT", "3306"))
     mysql_user: str = _get("MYSQL_USER", "root")
-    mysql_password: str = _get("MYSQL_PASSWORD", "root")
+    mysql_password: str = _get("MYSQL_PASSWORD", "")
     mysql_db: str = _get("MYSQL_DB", "RAG")
 
     # DashScope（阶段三/四启用）
@@ -68,13 +72,15 @@ class AppConfig:
     llm_model: str = _get("DASHSCOPE_MODEL", "qwen-flash")
     embedding_model: str = _get("DASHSCOPE_EMBEDDING", "text-embedding-v4")
     embedding_dim: int = int(_get("EMBEDDING_DIM", "1024"))  # text-embedding-v4 实际维度
+    # 单次 DashScope 调用超时（秒），防止网络/服务端偶发挂起拖死请求线程
+    llm_timeout: int = int(_get("DASHSCOPE_TIMEOUT", "60"))
 
     # Neo4j（阶段三启用）
     # 本机存在一个绑 127.0.0.1:7687 的本地 Neo4j 服务，会覆盖 Docker 容器的 0.0.0.0:7687；
     # 故默认走 IPv6 回环 [::1] 直达 Docker 容器（隧道端口冲突）。
     neo4j_uri: str = _get("NEO4J_URI", "bolt://[::1]:7687")
     neo4j_user: str = _get("NEO4J_USER", "neo4j")
-    neo4j_password: str = _get("NEO4J_PASSWORD", "brain2026")
+    neo4j_password: str = _get("NEO4J_PASSWORD", "")
     neo4j_database: str = _get("NEO4J_DATABASE", "neo4j")
 
     def ensure_dirs(self) -> None:

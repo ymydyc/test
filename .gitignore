@@ -43,4 +43,21 @@ Thumbs.db
 数据库设计.md
 需求.txt
 Git连接与上传指南.md
+# 功能清单为交付文档可入版控，如需过滤请取消下一行注释
+# 功能清单.md
+
+# 开发专用脚本（调试、诊断、临时验收，不入版控）
+scripts/_*.py
+scripts/acceptance_stage*.py
+scripts/_diag_*.py
+scripts/_final_smoke.py
+scripts/_check_dashscope.py
+scripts/_check_models.py
+scripts/_check_neo4j.py
+scripts/_dbg_*.py
+
+# 运行日志、临时文件
+*.log
+temp/
+tmp/
 

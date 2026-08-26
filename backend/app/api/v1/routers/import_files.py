@@ -9,11 +9,13 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.engine import get_db
 from app.schemas.import_files import (
+    ClipRequest,
     CreateFolderRequest,
     MoveRequest,
     OperationResponse,
     RenameRequest,
 )
+from app.services.clip_service import ClipError, ClipService
 from app.services.import_service import ImportService, PathSafetyError
 
 router = APIRouter(prefix="/import-files", tags=["导入区"])
@@ -51,6 +53,17 @@ async def upload_files(
     except PathSafetyError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return OperationResponse(ok=True, message="上传成功", data={"saved": results}).model_dump()
+
+
+@router.post("/clip", summary="网页剪藏到导入区（FR-12：URL → Markdown）", response_model=OperationResponse)
+def clip(payload: ClipRequest, db: Session = Depends(get_db)):
+    try:
+        data = ClipService(settings.raw_dir).clip_url(db, payload.url, payload.target_dir)
+    except (ClipError, PathSafetyError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"网页剪藏失败：{e}") from e
+    return OperationResponse(ok=True, message="网页剪藏成功", data=data).model_dump()
 
 
 @router.post("/folders", summary="新建文件夹", response_model=OperationResponse)

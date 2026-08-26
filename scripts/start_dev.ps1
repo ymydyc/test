@@ -1,6 +1,6 @@
 # 第二大脑 阶段一 一键启动脚本（Windows）
 # 用法：PowerShell 中执行  .\scripts\start_dev.ps1
-# 前置：MySQL(127.0.0.1:3306 root/root) 已启动
+# 前置：MySQL(127.0.0.1:3306) 已启动，凭据通过 .env 配置（MYSQL_USER/MYSQL_PASSWORD）
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent

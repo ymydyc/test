@@ -97,12 +97,36 @@ def _upgrade_column_types() -> None:
         log.info("列类型升级跳过：%s", e)
 
 
+def _ensure_utf8mb4() -> None:
+    """将库中所有表转换为 utf8mb4（支持 4 字节字符，如 emoji/生僻字），幂等。
+
+    LLM 生成的回顾摘要/笔记正文可能含 emoji（🔍 等 4 字节 UTF-8），
+    旧 utf8 列无法存储会报 DataError(1366)。CONVERT 对既有数据安全（utf8 ⊂ utf8mb4）。
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+    from app.db.engine import engine as app_engine
+    try:
+        with app_engine.begin() as conn:
+            tables = [r[0] for r in conn.execute(text(
+                "SELECT TABLE_NAME FROM information_schema.TABLES "
+                "WHERE TABLE_SCHEMA = DATABASE()"
+            ))]
+            for t in tables:
+                conn.execute(text(
+                    f"ALTER TABLE `{t}` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+                ))
+        log.info("已确保全表字符集 utf8mb4（%s 张表）", len(tables))
+    except SQLAlchemyError as e:
+        log.info("utf8mb4 升级跳过：%s", e)
+
+
 def init_all() -> None:
     """完整初始化：建库 + 建表 + 目录。"""
     settings.ensure_dirs()
     ensure_database()
     create_tables()
     _upgrade_column_types()
+    _ensure_utf8mb4()
     log.info("数据库初始化完成（库=%s，表=%s 张）", settings.mysql_db, len(Base.metadata.tables))
 
 
