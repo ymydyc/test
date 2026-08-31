@@ -7,8 +7,11 @@ from app.parsers.base import DocumentParser, ParseError
 
 
 class MarkdownParser(DocumentParser):
-    def parse(self, path: Path) -> str:
+    def parse_bytes(self, data: bytes, name: str = "") -> str:
         try:
-            return path.read_text(encoding="utf-8")
+            return data.decode("utf-8")
         except UnicodeDecodeError as e:
-            raise ParseError(f"无法读取 Markdown 文件：{path.name}") from e
+            raise ParseError(f"无法读取 Markdown 文件：{name or '文件'}") from e
+
+    def parse(self, path: Path) -> str:
+        return self.parse_bytes(path.read_bytes(), path.name)

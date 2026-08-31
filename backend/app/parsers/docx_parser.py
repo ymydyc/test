@@ -7,13 +7,13 @@ from app.parsers.base import DocumentParser, ParseError
 
 
 class DocxParser(DocumentParser):
-    def parse(self, path: Path) -> str:
+    def parse_bytes(self, data: bytes, name: str = "") -> str:
         try:
             from docx import Document
         except ImportError as e:  # pragma: no cover
             raise ParseError("缺少依赖 python-docx，无法解析 Word") from e
         try:
-            doc = Document(str(path))
+            doc = Document(self._stream(data))
             parts: list[str] = []
             # 段落（跳过空段）
             for para in doc.paragraphs:
@@ -30,4 +30,4 @@ class DocxParser(DocumentParser):
                     parts.append("\n".join(rows))
             return "\n\n".join(parts)
         except Exception as e:
-            raise ParseError(f"Word 解析失败（{path.name}）：{e}") from e
+            raise ParseError(f"Word 解析失败（{name or '文件'}）：{e}") from e

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.db.models import DocChunk
+from app.db.scoping import workspace_scope
 from app.services.llm.base import LLMClient
 from app.services.retriever.base import Retriever
 from app.vectorstore.base import VectorStore
@@ -30,6 +31,7 @@ class VectorRetriever(Retriever):
         top_k: int = 8,
         neighbors: int = 2,
         exhaustive_parent_trackback: bool = True,
+        workspace_id: int = 1,
     ) -> None:
         self.llm = llm
         self.vs = vs
@@ -38,11 +40,16 @@ class VectorRetriever(Retriever):
         self.neighbors = neighbors  # 命中子块两侧补充的相邻子块数（语境连续）
         # 父块回溯增强开关（FR-04：向量命中子块后回溯父块提供完整章节上下文）
         self.exhaustive_parent_trackback = exhaustive_parent_trackback
+        self.workspace_id = workspace_id  # 工作区隔离键（阶段七：按 workspace 隔离）
 
     def retrieve(self, query: str, top_k: int | None = None) -> list[dict]:
         k = top_k or self.top_k
         query_emb = self.llm.embed([query])[0]
-        hits = self.vs.query(CHUNK_COLLECTION, [query_emb], top_k=k)
+        # 向量检索按工作区隔离，防止跨空间取到他人子块
+        hits = self.vs.query(
+            CHUNK_COLLECTION, [query_emb], top_k=k,
+            where={"workspace_id": self.workspace_id},
+        )
         if not hits:
             return []
 
@@ -57,7 +64,12 @@ class VectorRetriever(Retriever):
         if not chunk_ids:
             return []
 
-        rows = self.db.query(DocChunk).filter(DocChunk.id.in_(chunk_ids)).all()
+        # 命中子块也按工作区过滤，防止跨空间取到他人子块
+        rows = (
+            self.db.query(DocChunk)
+            .filter(DocChunk.id.in_(chunk_ids), workspace_scope(DocChunk, self.workspace_id))
+            .all()
+        )
         rows_by_id = {r.id: r for r in rows}
 
         # 权威 note_id（全部命中来自同一批子块，取首个有值者）
@@ -72,7 +84,12 @@ class VectorRetriever(Retriever):
             text = row.chunk_text
             parent_text = None
             if self.exhaustive_parent_trackback and row.parent_chunk_id:
-                parent = self.db.query(DocChunk).filter(DocChunk.id == row.parent_chunk_id).first()
+                parent = (
+                    self.db.query(DocChunk)
+                    .filter(DocChunk.id == row.parent_chunk_id,
+                            workspace_scope(DocChunk, self.workspace_id))
+                    .first()
+                )
                 parent_text = parent.chunk_text if parent else None
             used.add(row.id)
             results.append({
@@ -95,7 +112,9 @@ class VectorRetriever(Retriever):
             # 一次性取该笔记全部子块，按 (parent_chunk_id, chunk_index) 定位相邻
             all_childs = (
                 self.db.query(DocChunk)
-                .filter(DocChunk.note_id == note_id, DocChunk.parent_chunk_id.isnot(None))
+                .filter(DocChunk.note_id == note_id,
+                        workspace_scope(DocChunk, self.workspace_id),
+                        DocChunk.parent_chunk_id.isnot(None))
                 .order_by(DocChunk.parent_chunk_id, DocChunk.chunk_index)
                 .all()
             )
@@ -119,7 +138,10 @@ class VectorRetriever(Retriever):
                     used.add(n.id)
                     parent = None
                     if self.exhaustive_parent_trackback and n.parent_chunk_id:
-                        parent = self.db.query(DocChunk).filter(DocChunk.id == n.parent_chunk_id).first()
+                        parent = self.db.query(DocChunk).filter(
+                            DocChunk.id == n.parent_chunk_id,
+                            workspace_scope(DocChunk, self.workspace_id),
+                        ).first()
                     results.append({
                         "id": f"c{n.id}",
                         "title": f"段落{n.chunk_index}",

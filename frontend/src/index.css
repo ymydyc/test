@@ -102,3 +102,60 @@ body {
   min-width: 0;
   background: #f5f6f8;
 }
+
+/* 阶段七：登录态 */
+.app-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.app-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 4px;
+  border: 1px solid #e5e6eb;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.app-user-avatar {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #2f6fed;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.app-user-name {
+  font-size: 13px;
+  color: #1f2329;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-logout {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.app-logout:hover {
+  background: #f0f3f9;
+  color: #e5484d;
+}

@@ -1,14 +1,14 @@
-"""网页剪藏服务（FR-12）：URL → 原始文件区（Markdown）。
+"""网页剪藏服务（FR-12）：URL → 导入区（Markdown，阶段六纯 DB 存储）。
 
 - 用 trafilatura 抓取网页并提取正文（优先），失败时降级 requests 直连。
-- 提取结果为 Markdown，保存到 `raw/{target_dir}/{safe_name}.md`，并登记 `import_files` 记录（未写入状态）。
-- 目标目录与文件名均做路径安全校验（防穿越）。
+- 提取结果为 Markdown，以字节写入 `import_files.content`（目标目录/文件名做防穿越校验），
+  并登记 `import_files` 记录（未写入状态），不再落本地磁盘。
 """
 from __future__ import annotations
 
 import re
 import unicodedata
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.models import ImportFile
+from app.db.scoping import workspace_scope
 from app.services.import_service import ImportService, PathSafetyError
 
 log = get_logger("services.clip")
@@ -33,8 +34,9 @@ class ClipError(ValueError):
 
 
 class ClipService:
-    def __init__(self, raw_dir: Path | str | None = None) -> None:
+    def __init__(self, raw_dir: Path | str | None = None, workspace_id: int = 1) -> None:
         self.raw_dir = Path(raw_dir or settings.raw_dir)
+        self.workspace_id = workspace_id  # 工作区隔离键（阶段七）
 
     # ---------- 抓取与提取 ----------
     def _fetch(self, url: str) -> str:
@@ -84,17 +86,20 @@ class ClipService:
         return (slug or "clip")[:120]
 
     def _safe_target(self, target_dir: str) -> Path:
-        svc = ImportService(self.raw_dir)
+        svc = ImportService(self.raw_dir, workspace_id=self.workspace_id)
         return svc._safe_rel(target_dir)
 
-    def _unique_path(self, rel_base: str, stem: str) -> Path:
-        """避免与已存在文件重名：a.md / a-2.md / a-3.md ..."""
+    def _unique_path(self, db: Session, rel_base: str, stem: str) -> str:
+        """避免与已存在文件重名（查询 DB 本工作区）：a.md / a-2.md / a-3.md ..."""
         n = 1
         while True:
             name = f"{stem}.md" if n == 1 else f"{stem}-{n}.md"
             rel = f"{rel_base}/{name}" if rel_base else name
-            if not (self.raw_dir / rel).exists():
-                return Path(rel)
+            exists = db.query(ImportFile).filter(
+                ImportFile.rel_path == rel,
+                workspace_scope(ImportFile, self.workspace_id)).first()
+            if not exists:
+                return rel
             n += 1
 
     # ---------- 对外入口 ----------
@@ -117,34 +122,18 @@ class ClipService:
         stem = self._safe_stem(host, parsed.path)
         target = self._safe_target(target_dir)
 
-        svc = ImportService(self.raw_dir)
-        rel = self._unique_path(target.as_posix(), stem)
-        dest = (self.raw_dir / rel).resolve()
-        root = self.raw_dir.resolve()
-        if dest != root and root not in dest.parents:
-            raise PathSafetyError("剪藏路径越界")
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        svc = ImportService(self.raw_dir, workspace_id=self.workspace_id)
+        rel = self._unique_path(db, target.as_posix(), stem)
+        # 防穿越：目标必须落在导入区根内（安全相对路径已由 _safe_target 保证，冗余校验）
+        if PurePosixPath(rel).is_absolute() or any(seg == ".." for seg in PurePosixPath(rel).parts):
+            raise PathSafetyError("剪藏路径非法")
 
         title = extracted.get("title") or stem
         content_md = f"# {title}\n\n> 来源：{url}\n\n{text}\n"
-        dest.write_text(content_md, encoding="utf-8")
 
-        # 登记导入记录（未写入状态，与上传一致）
-        parent = dest.parent.relative_to(self.raw_dir).as_posix()
-        parent = "" if parent == "." else parent
-        content_hash = ImportService._hash(dest)
-        rec = db.query(ImportFile).filter(ImportFile.rel_path == rel.as_posix()).first()
-        if rec is None:
-            db.add(ImportFile(
-                rel_path=rel.as_posix(), rel_path_hash=ImportService._rel_hash(rel.as_posix()),
-                file_name=dest.name, ext_type="md", is_dir=0, parent_path=parent,
-                content_hash=content_hash, import_status=0, file_size=dest.stat().st_size,
-            ))
-        else:
-            rec.content_hash = content_hash
-            rec.file_size = dest.stat().st_size
-            rec.import_status = 0
+        # 内容以字节写入 import_files.content（阶段六纯 DB），未写入状态
+        svc.ensure_file_record(db, rel, content_md.encode("utf-8"), import_status=0)
         db.commit()
 
-        log.info("网页剪藏完成：%s -> %s", url, rel.as_posix())
-        return {"path": rel.as_posix(), "name": dest.name, "title": title, "source_url": url}
+        log.info("网页剪藏完成（入库）：%s -> %s", url, rel)
+        return {"path": rel, "name": PurePosixPath(rel).name, "title": title, "source_url": url}

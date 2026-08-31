@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.db.models import DocChunk, GraphEntity, GraphRelation, ImportFile, KbNote, ReviewRecord
+from app.db.models import ChatMessage, ChatSession, DocChunk, GraphEntity, GraphRelation, ImportFile, KbNote, ReviewRecord
 
 DDL = {
     "kb_notes": """
@@ -26,6 +26,7 @@ DDL = {
             content_hash CHAR(64) NOT NULL,
             origin_import_id BIGINT,
             frontmatter_json TEXT,
+            workspace_id BIGINT,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -40,6 +41,7 @@ DDL = {
             char_end INTEGER NOT NULL,
             parent_chunk_id BIGINT,
             chroma_id VARCHAR(128),
+            workspace_id BIGINT,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """,
@@ -53,6 +55,7 @@ DDL = {
             source_note_ids TEXT,
             neo4j_id VARCHAR(128),
             embedding_snapshot INTEGER NOT NULL DEFAULT 0,
+            workspace_id BIGINT,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -66,6 +69,7 @@ DDL = {
             description TEXT,
             source_note_id BIGINT,
             neo4j_rel_id VARCHAR(128),
+            workspace_id BIGINT,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """,
@@ -73,9 +77,10 @@ DDL = {
         CREATE TABLE review_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             period_type VARCHAR(16) NOT NULL,
-            period_key VARCHAR(32) NOT NULL UNIQUE,
+            period_key VARCHAR(32) NOT NULL,
             summary_md TEXT NOT NULL,
             note_id BIGINT,
+            workspace_id BIGINT,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """,
@@ -88,11 +93,32 @@ DDL = {
             ext_type VARCHAR(32) NOT NULL,
             is_dir INTEGER NOT NULL DEFAULT 0,
             parent_path VARCHAR(1024),
-            content_hash CHAR(64) NOT NULL,
+            content_hash CHAR(64),
             import_status INTEGER NOT NULL DEFAULT 0,
-            file_size INTEGER NOT NULL DEFAULT 0,
+            file_size INTEGER,
+            content BLOB,
+            workspace_id BIGINT,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
+    "chat_sessions": """
+        CREATE TABLE chat_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id BIGINT,
+            title VARCHAR(255),
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
+    "chat_messages": """
+        CREATE TABLE chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id BIGINT NOT NULL,
+            role VARCHAR(16) NOT NULL,
+            content TEXT NOT NULL,
+            citations_json TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """,
 }
@@ -128,6 +154,9 @@ class _MockLLM:
 
 class _NoopGraphService:
     """生成回顾后触发的向量/图谱构建 no-op。"""
+
+    def __init__(self, *args, **kwargs):
+        pass
 
     def build_note_vectors(self, *a, **k):
         return {"indexed": 0}
@@ -206,13 +235,14 @@ def test_review_generate_idempotent(db, monkeypatch, tmp_path):
     assert db.query(KbNote).filter(KbNote.note_path == "reviews/2026-08.md").count() == 1
 
 
-def test_review_generate_skips_without_notes(db, monkeypatch, tmp_path):
-    """窗口内无笔记 → 优雅跳过（不抛错、不写库）。"""
+def test_review_generate_skips_without_data(db, monkeypatch, tmp_path):
+    """窗口内无数据 → 优雅跳过（不抛错、不写库）。"""
     import app.services.review_service as rmod
     monkeypatch.setattr(rmod.settings, "dashscope_api_key", "test-key")
     svc = rmod.ReviewService(kb_dir=tmp_path, llm=_MockLLM())
     result = svc.generate_review(db, "week", "2026-W40")
     assert result["status"] == "skipped"
+    assert "无活动数据" in result["reason"]
     assert db.query(ReviewRecord).count() == 0
 
 
@@ -233,7 +263,8 @@ def test_review_delete_cascades_note(db, monkeypatch, tmp_path):
     monkeypatch.setattr(gmod, "GraphService", _NoopGraphService)
     monkeypatch.setattr(rmod.settings, "dashscope_api_key", "test-key")
 
-    _mk_note(db, "d.md", "# D", updated=dt.datetime.now())
+    # 固定到 W35 窗口内（[2026-08-24, 2026-08-31)），避免随真实日期推移而失效
+    _mk_note(db, "d.md", "# D", updated=dt.datetime(2026, 8, 25, 10, 0))
     db.commit()
     svc = rmod.ReviewService(kb_dir=tmp_path, llm=_MockLLM())
     result = svc.generate_review(db, "week", "2026-W35")
@@ -255,6 +286,74 @@ def test_review_time_window_parsing():
     ms, me = svc.time_window("month", "2026-08")
     assert ms == dt.datetime(2026, 8, 1)
     assert me == dt.datetime(2026, 9, 1)
+
+
+def test_review_collects_chat_sessions(db, monkeypatch, tmp_path):
+    """生成回顾时采集 AI 对话记录。"""
+    import app.services.review_service as rmod
+    import app.services.graph_service as gmod
+    monkeypatch.setattr(gmod, "GraphService", _NoopGraphService)
+    monkeypatch.setattr(rmod.settings, "dashscope_api_key", "test-key")
+
+    # 创建一条 AI 对话
+    cs = ChatSession(user_id=42, title="测试对话", created_at=dt.datetime(2026, 8, 18, 10, 0))
+    db.add(cs)
+    db.flush()
+    db.add(ChatMessage(session_id=cs.id, role="user", content="今天学了什么？",
+                       created_at=dt.datetime(2026, 8, 18, 10, 1)))
+    db.add(ChatMessage(session_id=cs.id, role="assistant", content="今天学习了 RAG 和向量检索",
+                       created_at=dt.datetime(2026, 8, 18, 10, 2)))
+    db.commit()
+
+    svc = rmod.ReviewService(kb_dir=tmp_path, llm=_MockLLM(), user_id=42)
+    result = svc.generate_review(db, "week", "2026-W34")
+    assert result["status"] == "ok"
+    assert result["chat_count"] == 1
+
+
+def test_review_collects_import_files(db, monkeypatch, tmp_path):
+    """生成回顾时采集导入文件目录。"""
+    import app.services.review_service as rmod
+    import app.services.graph_service as gmod
+    import hashlib
+    monkeypatch.setattr(gmod, "GraphService", _NoopGraphService)
+    monkeypatch.setattr(rmod.settings, "dashscope_api_key", "test-key")
+
+    path = "docs/report.pdf"
+    db.add(ImportFile(
+        rel_path=path, rel_path_hash=hashlib.sha256(path.encode()).hexdigest(),
+        file_name="report.pdf", ext_type="pdf", is_dir=0,
+        workspace_id=1, created_at=dt.datetime(2026, 8, 18, 10, 0),
+    ))
+    db.commit()
+
+    svc = rmod.ReviewService(kb_dir=tmp_path, llm=_MockLLM(), workspace_id=1)
+    result = svc.generate_review(db, "week", "2026-W34")
+    assert result["status"] == "ok"
+    assert result["import_count"] == 1
+
+
+def test_review_skips_chat_without_user_id(db, monkeypatch, tmp_path):
+    """无 user_id 时不采集 AI 对话记录。"""
+    import app.services.review_service as rmod
+    import app.services.graph_service as gmod
+    monkeypatch.setattr(gmod, "GraphService", _NoopGraphService)
+    monkeypatch.setattr(rmod.settings, "dashscope_api_key", "test-key")
+
+    cs = ChatSession(user_id=42, title="测试对话", created_at=dt.datetime(2026, 8, 18, 10, 0))
+    db.add(cs)
+    db.flush()
+    db.add(ChatMessage(session_id=cs.id, role="user", content="测试",
+                       created_at=dt.datetime(2026, 8, 18, 10, 1)))
+    # 有对话但无 user_id，只能靠 kb_notes 触发
+    _mk_note(db, "a.md", "# A", updated=dt.datetime(2026, 8, 18, 10, 0))
+    db.commit()
+
+    svc = rmod.ReviewService(kb_dir=tmp_path, llm=_MockLLM())  # 无 user_id
+    result = svc.generate_review(db, "week", "2026-W34")
+    assert result["status"] == "ok"
+    assert result["chat_count"] == 0  # 不采集对话
+    assert result["note_count"] == 1  # 只采集笔记
 
 
 # ---------- 健康检查（FR-10） ----------
@@ -330,12 +429,15 @@ def test_clip_url_saves_md_and_registers(db, monkeypatch, tmp_path):
     result = svc.clip_url(db, "https://example.com/a/b", target_dir="web")
     assert result["name"].endswith(".md")
     assert result["path"].startswith("web/")
-    assert (raw / result["path"]).exists()
 
     rec = db.query(ImportFile).filter(ImportFile.rel_path == result["path"]).first()
     assert rec is not None
     assert rec.ext_type == "md"
     assert rec.import_status == 0
+    # 阶段六：内容写入 DB content，不再落本地磁盘
+    assert rec.content is not None
+    assert "剪藏正文" in rec.content.decode("utf-8")
+    assert not (raw / result["path"]).exists()
 
     # 同一 URL 再剪藏 → 自动改名 a-2.md，不覆盖
     result2 = svc.clip_url(db, "https://example.com/a/b", target_dir="web")

@@ -7,11 +7,14 @@ from app.parsers.base import DocumentParser, ParseError
 
 
 class TextParser(DocumentParser):
-    def parse(self, path: Path) -> str:
+    def parse_bytes(self, data: bytes, name: str = "") -> str:
         try:
-            return path.read_text(encoding="utf-8")
+            return data.decode("utf-8")
         except UnicodeDecodeError:
             try:
-                return path.read_text(encoding="gbk")
+                return data.decode("gbk")
             except UnicodeDecodeError as e:
-                raise ParseError(f"无法以文本方式读取：{path.name}（疑似二进制文件）") from e
+                raise ParseError(f"无法以文本方式读取：{name or '文件'}（疑似二进制文件）") from e
+
+    def parse(self, path: Path) -> str:
+        return self.parse_bytes(path.read_bytes(), path.name)

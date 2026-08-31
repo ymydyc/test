@@ -11,6 +11,7 @@
 | 阶段三 | 图谱增量构建 + 混合检索底座（FR-03/04/05） | ✅ |
 | 阶段四 | 图谱可视化 + AI 助手（FR-06/07/08） | ✅ |
 | 阶段五 | 进阶能力 + 交付打磨（FR-09/10/12） | ✅ |
+| 阶段六 | 导入区数据 MySQL 数据库化（优化） | ✅ |
 
 ## 技术栈（固定）
 
@@ -29,9 +30,9 @@
 ```
 backend/     FastAPI 后端（分层：core/db/api/schemas/services/...）
 frontend/    React + TS + Vite 前端
-data/raw/    原始文件区（保留文件夹结构）
+data/raw/    原始文件区「逻辑根路径」（阶段六起文件内容存 MySQL，不再落盘）
 data/kb/     知识库笔记（阶段二起用）
-data/input/  AI 生成 md 默认目录
+data/input/  AI 生成 md 目录（阶段六起并入导入区 DB，默认子目录 output/）
 scripts/     start_dev.ps1 / db_sync.py
 ```
 

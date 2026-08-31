@@ -20,7 +20,8 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.db.models import DocChunk, GraphEntity, GraphRelation, ImportFile, KbNote
-from app.parsers import parse_file
+from app.db.scoping import workspace_scope
+from app.parsers import parse_bytes
 from app.parsers.base import ParseError
 from app.parsers.html_parser import HtmlParser
 from app.parsers.markdown_parser import MarkdownParser
@@ -140,9 +141,10 @@ def _split_section(
 
 
 class KbService:
-    def __init__(self, kb_dir: Path | str, raw_dir: Path | str) -> None:
+    def __init__(self, kb_dir: Path | str, raw_dir: Path | str, workspace_id: int = 1) -> None:
         self.kb_dir = Path(kb_dir)
         self.raw_dir = Path(raw_dir)
+        self.workspace_id = workspace_id  # 工作区隔离键（阶段七）
         self._graph: "GraphService | None" = None
 
     @property
@@ -150,37 +152,49 @@ class KbService:
         """懒加载图谱/向量服务（需 DashScope Key 才真正启用）。"""
         if self._graph is None:
             from app.services.graph_service import GraphService
-            self._graph = GraphService()
+            self._graph = GraphService(workspace_id=self.workspace_id)
         return self._graph
 
     def _index_note(self, db: Session, note_id: int) -> None:
-        """写库/编辑后触发向量索引 + 图谱增量构建（FR-03/FR-05）。无 Key 或失败均降级不阻塞。"""
+        """写库/编辑后触发向量索引（FR-05）。无 Key 或失败均降级不阻塞。
+
+        图谱构建由用户显式点击"重建图谱"触发，不在此处自动构建。
+
+        注意：build_note_vectors 内会 db.commit()，若发生异常（如与调度器
+        同步线程竞态，doc_chunks 被另一会话重建），需先 rollback 清理当前
+        会话的半开事务，避免调用方（_write_file / save_note_edit）的后续
+        commit 踏在 PendingRollbackError 上导致源文件标记回滚。
+        """
         from app.core.config import settings
         if not settings.dashscope_api_key:
             return
         try:
             self._graph_service.build_note_vectors(db, note_id)
-            self._graph_service.build_note_graph(db, note_id)
         except Exception as e:
-            log.warning("笔记向量/图谱构建失败（note=%s）：%s", note_id, e)
+            db.rollback()
+            log.warning("笔记向量构建失败（note=%s）：%s", note_id, e)
 
     # ---------- 工具 ----------
     @staticmethod
     def _sha(text: str) -> str:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-    @staticmethod
-    def _rel_hash(rel: str) -> str:
-        return hashlib.sha256(rel.encode("utf-8")).hexdigest()
+    def _rel_hash(self, rel: str) -> str:
+        """note_path 的 SHA256（供唯一索引，规避 utf8mb4 长索引限制）。
+
+        阶段七起把 `workspace_id` 纳入哈希盐：跨工作区同名笔记各自独立唯一，
+        同工作区内同一路径仍幂等去重。
+        """
+        return hashlib.sha256(f"{self.workspace_id}\x00{rel}".encode("utf-8")).hexdigest()
 
     def _import_service(self) -> ImportService:
-        return ImportService(self.raw_dir)
+        return ImportService(self.raw_dir, workspace_id=self.workspace_id)
 
     @staticmethod
-    def _is_text_based(abs_p: Path) -> bool:
+    def _is_text_based(name: str) -> bool:
         """是否纯文本格式（可安全回写原文件）。"""
         from app.parsers import get_parser
-        parser = get_parser(abs_p.suffix.lower().lstrip("."))
+        parser = get_parser(Path(name).suffix.lower().lstrip("."))
         return isinstance(parser, (TextParser, MarkdownParser, HtmlParser))
 
     @staticmethod
@@ -200,7 +214,9 @@ class KbService:
         candidate = base
         n = 2
         while True:
-            existing = db.query(KbNote).filter(KbNote.note_path == candidate).first()
+            existing = db.query(KbNote).filter(
+                KbNote.note_path == candidate,
+                workspace_scope(KbNote, self.workspace_id)).first()
             if existing is None or existing.origin_import_id == origin_id:
                 return candidate
             stem = PurePosixPath(base).stem
@@ -215,6 +231,7 @@ class KbService:
             row = DocChunk(
                 note_id=note_id, chunk_index=i, chunk_text=c["text"],
                 char_start=c["start"], char_end=c["end"], parent_chunk_id=None, chroma_id=None,
+                workspace_id=self.workspace_id,
             )
             rows.append(row)
             db.add(row)
@@ -236,7 +253,7 @@ class KbService:
     # ---------- 选择性写入（FR-02） ----------
     def write_selected(self, db: Session, rel_paths: list[str]) -> dict:
         svc = self._import_service()
-        svc.sync_from_fs(db)  # 确保 DB 记录与磁盘对齐
+        svc.sync_from_fs(db)  # 迁移容错：把遗留磁盘文件并入 DB（阶段六后为 no-op）
         results: list[dict] = []
         for rel in rel_paths:
             try:
@@ -244,14 +261,16 @@ class KbService:
             except PathSafetyError as e:
                 results.append({"path": rel, "type": "file", "status": "error", "reason": str(e)})
                 continue
-            abs_p = (self.raw_dir / safe).resolve()
-            if not abs_p.exists():
+            rec = db.query(ImportFile).filter(
+                ImportFile.rel_path == safe.as_posix(),
+                workspace_scope(ImportFile, self.workspace_id)).first()
+            if rec is None:
                 results.append({"path": rel, "type": "file", "status": "error", "reason": "文件不存在"})
                 continue
-            if abs_p.is_dir():
-                self._write_folder(db, abs_p, results)
+            if rec.is_dir:
+                self._write_folder(db, rec.rel_path, results)
             else:
-                self._write_file(db, abs_p, results)
+                self._write_file(db, rec.rel_path, results)
         written = skipped = failed = 0
         for r in results:
             w, s, f = self._count_result(r)
@@ -280,15 +299,14 @@ class KbService:
             return 0, 1, 0
         return 0, 0, 1
 
-    def _write_folder(self, db: Session, abs_dir: Path, results: list[dict]) -> None:
-        rel_dir = abs_dir.relative_to(self.raw_dir).as_posix()
-        files = [f for f in abs_dir.rglob("*") if f.is_file()]
+    def _write_folder(self, db: Session, rel_dir: str, results: list[dict]) -> None:
+        files = self._import_service().file_records_under(db, rel_dir)
         if not files:
             results.append({"path": rel_dir, "type": "dir", "status": "skipped", "reason": "空文件夹"})
             return
         items: list[dict] = []
-        for f in files:
-            items.append(self._write_file(db, f, results, nested=True))
+        for rec in files:
+            items.append(self._write_file(db, rec.rel_path, results, nested=True))
         statuses = [it["status"] for it in items]
         if all(s == "skipped" for s in statuses):
             results.append({"path": rel_dir, "type": "dir", "status": "skipped",
@@ -301,9 +319,10 @@ class KbService:
                             "reason": f"已写入 {done} 个文件，跳过 {skipped} 个已导入，失败 {failed} 个",
                             "items": items})
 
-    def _write_file(self, db: Session, abs_file: Path, results: list[dict], nested: bool = False) -> dict:
-        rel = abs_file.relative_to(self.raw_dir).as_posix()
-        rec = db.query(ImportFile).filter(ImportFile.rel_path == rel).first()
+    def _write_file(self, db: Session, rel: str, results: list[dict], nested: bool = False) -> dict:
+        rec = db.query(ImportFile).filter(
+            ImportFile.rel_path == rel,
+            workspace_scope(ImportFile, self.workspace_id)).first()
         if rec is None:
             result = {"path": rel, "type": "file", "status": "error", "reason": "导入区记录缺失，请刷新"}
             if not nested:
@@ -314,15 +333,20 @@ class KbService:
             if not nested:
                 results.append(result)
             return result
+        if rec.is_dir or rec.content is None:
+            result = {"path": rel, "type": "file", "status": "error", "reason": "导入区文件内容缺失，请重新上传"}
+            if not nested:
+                results.append(result)
+            return result
         try:
-            md = parse_file(abs_file)
+            md = parse_bytes(rec.content, rec.rel_path)
         except ParseError as e:
             result = {"path": rel, "type": "file", "status": "error", "reason": f"解析失败：{e}"}
             if not nested:
                 results.append(result)
             return result
         try:
-            self._upsert_note(db, rec, md, abs_file)
+            self._upsert_note(db, rec, md)
             db.commit()
             result = {"path": rel, "type": "file", "status": "success", "reason": "已写入",
                       "note_path": self._note_path_of(db, rec.id), "note_id": self._note_id_of(db, rec.id)}
@@ -347,18 +371,20 @@ class KbService:
         note = db.query(KbNote).filter(KbNote.origin_import_id == import_id).first()
         return note.note_path if note else None
 
-    def _upsert_note(self, db: Session, rec: ImportFile, md: str, abs_file: Path) -> KbNote:
+    def _upsert_note(self, db: Session, rec: ImportFile, md: str) -> KbNote:
         """按 origin_import_id 写入/更新原笔记（更新而非重建），并重建向量块。"""
         note_path = self._derive_note_path(db, rec.rel_path, rec.id)
         content_hash = self._sha(md)
         title = self._derive_title(md, rec.file_name)
         frontmatter = json.dumps({"origin": rec.rel_path, "origin_type": rec.ext_type}, ensure_ascii=False)
-        note = db.query(KbNote).filter(KbNote.origin_import_id == rec.id).first()
+        note = db.query(KbNote).filter(
+            KbNote.origin_import_id == rec.id,
+            workspace_scope(KbNote, self.workspace_id)).first()
         if note is None:
             note = KbNote(
                 note_path=note_path, note_path_hash=self._rel_hash(note_path), title=title,
                 content_md=md, content_hash=content_hash, origin_import_id=rec.id,
-                frontmatter_json=frontmatter,
+                frontmatter_json=frontmatter, workspace_id=self.workspace_id,
             )
             db.add(note)
             db.flush()
@@ -382,12 +408,14 @@ class KbService:
 
     # ---------- 笔记 CRUD ----------
     def list_notes(self, db: Session) -> list[dict]:
-        rows = db.query(KbNote).order_by(KbNote.updated_at.desc()).all()
+        rows = db.query(KbNote).filter(workspace_scope(KbNote, self.workspace_id)).order_by(KbNote.updated_at.desc()).all()
         out: list[dict] = []
         for n in rows:
             origin_rel = None
             if n.origin_import_id:
-                rec = db.query(ImportFile).filter(ImportFile.id == n.origin_import_id).first()
+                rec = db.query(ImportFile).filter(
+                    ImportFile.id == n.origin_import_id,
+                    workspace_scope(ImportFile, self.workspace_id)).first()
                 origin_rel = rec.rel_path if rec else None
             out.append({
                 "id": n.id, "note_path": n.note_path, "title": n.title,
@@ -397,12 +425,15 @@ class KbService:
         return out
 
     def get_note(self, db: Session, note_id: int) -> dict:
-        n = db.query(KbNote).filter(KbNote.id == note_id).first()
+        n = db.query(KbNote).filter(
+            KbNote.id == note_id, workspace_scope(KbNote, self.workspace_id)).first()
         if n is None:
             raise FileNotFoundError("笔记不存在")
         origin_rel = None
         if n.origin_import_id:
-            rec = db.query(ImportFile).filter(ImportFile.id == n.origin_import_id).first()
+            rec = db.query(ImportFile).filter(
+                ImportFile.id == n.origin_import_id,
+                workspace_scope(ImportFile, self.workspace_id)).first()
             origin_rel = rec.rel_path if rec else None
         return {
             "id": n.id, "note_path": n.note_path, "title": n.title,
@@ -413,7 +444,8 @@ class KbService:
 
     def save_note_edit(self, db: Session, note_id: int, content_md: str) -> dict:
         """编辑笔记并保存：更新原笔记 + 写回磁盘 + 重建向量块 + 来源导入文件标记置 0。"""
-        n = db.query(KbNote).filter(KbNote.id == note_id).first()
+        n = db.query(KbNote).filter(
+            KbNote.id == note_id, workspace_scope(KbNote, self.workspace_id)).first()
         if n is None:
             raise FileNotFoundError("笔记不存在")
         n.content_md = content_md
@@ -422,7 +454,9 @@ class KbService:
         self._write_note_file(n.note_path, content_md)
         self._rebuild_chunks(db, n.id, content_md)
         if n.origin_import_id:
-            rec = db.query(ImportFile).filter(ImportFile.id == n.origin_import_id).first()
+            rec = db.query(ImportFile).filter(
+                ImportFile.id == n.origin_import_id,
+                workspace_scope(ImportFile, self.workspace_id)).first()
             if rec:
                 rec.import_status = 0  # 内容已变更，标记消失（待重写）
         db.commit()
@@ -431,40 +465,44 @@ class KbService:
         return {"note_id": n.id, "note_path": n.note_path, "import_status_reset": bool(n.origin_import_id)}
 
     def save_file_edit(self, db: Session, rel_path: str, content: str) -> dict:
-        """编辑导入区文本文件并保存：写回原文件 + 更新哈希/大小 + 导入标记置 0。"""
-        svc = self._import_service()
-        abs_p = svc._abs(rel_path)
-        if not abs_p.is_file():
+        """编辑导入区文本文件并保存：写回 DB content + 更新哈希/大小 + 导入标记置 0。"""
+        rec = db.query(ImportFile).filter(
+            ImportFile.rel_path == rel_path, ImportFile.is_dir == 0,
+            workspace_scope(ImportFile, self.workspace_id),
+        ).first()
+        if rec is None:
             raise FileNotFoundError("文件不存在")
-        if not self._is_text_based(abs_p):
+        if not self._is_text_based(rec.rel_path):
             raise ValueError("二进制格式不支持直接编辑保存，请先写入知识库后编辑笔记")
-        abs_p.write_text(content, encoding="utf-8")
-        rec = db.query(ImportFile).filter(ImportFile.rel_path == rel_path).first()
-        if rec:
-            rec.content_hash = ImportService._hash(abs_p)
-            rec.file_size = abs_p.stat().st_size
-            rec.import_status = 0  # 内容变更，标记消失（待重写）
+        data = content.encode("utf-8")
+        rec.content = data
+        rec.content_hash = hashlib.sha256(data).hexdigest()
+        rec.file_size = len(data)
+        rec.import_status = 0  # 内容变更，标记消失（待重写）
         db.commit()
-        log.info("导入区文件已保存：%s", rel_path)
+        log.info("导入区文件已保存（入库）：%s", rel_path)
         return {"rel_path": rel_path, "import_status": 0}
 
     def preview(self, db: Session, rel_path: str) -> dict:
-        """解析导入区文件为 Markdown（内容区预览/编辑底稿）。"""
-        svc = self._import_service()
-        abs_p = svc._abs(rel_path)
-        if not abs_p.is_file():
+        """解析导入区文件为 Markdown（内容区预览/编辑底稿），内容取自 DB。"""
+        rec = db.query(ImportFile).filter(
+            ImportFile.rel_path == rel_path, ImportFile.is_dir == 0,
+            workspace_scope(ImportFile, self.workspace_id),
+        ).first()
+        if rec is None or rec.content is None:
             raise FileNotFoundError("文件不存在")
-        md = parse_file(abs_p)
+        md = parse_bytes(rec.content, rec.rel_path)
         return {
             "rel_path": rel_path,
             "content_md": md,
-            "text_based": self._is_text_based(abs_p),
-            "ext": abs_p.suffix.lower().lstrip("."),
+            "text_based": self._is_text_based(rec.rel_path),
+            "ext": rec.ext_type,
         }
 
     def delete_note(self, db: Session, note_id: int) -> dict:
         """级联清理：向量块 + 独占图谱关系 + 孤立实体 + 笔记文件/记录，来源导入文件标记置 0。"""
-        n = db.query(KbNote).filter(KbNote.id == note_id).first()
+        n = db.query(KbNote).filter(
+            KbNote.id == note_id, workspace_scope(KbNote, self.workspace_id)).first()
         if n is None:
             raise FileNotFoundError("笔记不存在")
         origin_id = n.origin_import_id
@@ -482,7 +520,9 @@ class KbService:
         db.delete(n)  # 先删笔记，再清理图谱，使被删笔记 id 不再被视为"存在"
         self._cleanup_orphan_entities(db, note_id)
         if origin_id:
-            rec = db.query(ImportFile).filter(ImportFile.id == origin_id).first()
+            rec = db.query(ImportFile).filter(
+                ImportFile.id == origin_id,
+                workspace_scope(ImportFile, self.workspace_id)).first()
             if rec:
                 rec.import_status = 0
         db.commit()
@@ -508,7 +548,8 @@ class KbService:
 
     def _cleanup_orphan_entities(self, db: Session, removed_note_id: int) -> None:
         """级联清理：从实体来源列表剔除已删笔记，并删除不再被任何笔记引用的"孤立实体"（共享实体保留）。"""
-        for ent in db.query(GraphEntity).all():
+        for ent in db.query(GraphEntity).filter(
+                workspace_scope(GraphEntity, self.workspace_id)).all():
             src_ids: list[int] = []
             if ent.source_note_ids:
                 try:
@@ -520,6 +561,7 @@ class KbService:
                 ent.source_note_ids = json.dumps(src_ids, ensure_ascii=False)
             if not src_ids:
                 db.query(GraphRelation).filter(
+                    workspace_scope(GraphRelation, self.workspace_id),
                     (GraphRelation.source_entity_id == ent.id) | (GraphRelation.target_entity_id == ent.id)
                 ).delete()
                 db.delete(ent)

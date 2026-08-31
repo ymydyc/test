@@ -4,15 +4,17 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.v1.deps import get_current_user, get_current_workspace
 from app.db.engine import get_db
+from app.db.models import User, Workspace
 from app.schemas.review import ReviewDeleteRequest, ReviewGenerateRequest
 from app.services.review_service import ReviewService
 
 router = APIRouter(prefix="/review", tags=["周期回顾"])
 
 
-def _service() -> ReviewService:
-    return ReviewService()
+def _service(workspace_id: int, user_id: int | None = None) -> ReviewService:
+    return ReviewService(workspace_id=workspace_id, user_id=user_id)
 
 
 def _as_http(e: Exception, code: int = 400) -> HTTPException:
@@ -20,9 +22,11 @@ def _as_http(e: Exception, code: int = 400) -> HTTPException:
 
 
 @router.post("/generate", summary="生成周期回顾摘要（周/月，入库 + 写入知识库）")
-def generate(payload: ReviewGenerateRequest, db: Session = Depends(get_db)):
+def generate(payload: ReviewGenerateRequest, db: Session = Depends(get_db),
+             ws: Workspace = Depends(get_current_workspace),
+             user: User = Depends(get_current_user)):
     try:
-        return _service().generate_review(db, payload.period_type, payload.period_key)
+        return _service(ws.id, user.id).generate_review(db, payload.period_type, payload.period_key)
     except ValueError as e:
         raise _as_http(e) from e
     except Exception as e:  # pragma: no cover
@@ -30,17 +34,18 @@ def generate(payload: ReviewGenerateRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/list", summary="回顾记录列表")
-def list_reviews(db: Session = Depends(get_db)):
+def list_reviews(db: Session = Depends(get_db), ws: Workspace = Depends(get_current_workspace)):
     try:
-        return {"reviews": _service().list_reviews(db)}
+        return {"reviews": _service(ws.id).list_reviews(db)}
     except Exception as e:  # pragma: no cover
         raise HTTPException(status_code=500, detail=f"获取回顾列表失败：{e}") from e
 
 
 @router.get("/{review_id}", summary="回顾记录详情（含摘要 Markdown）")
-def get_review(review_id: int, db: Session = Depends(get_db)):
+def get_review(review_id: int, db: Session = Depends(get_db),
+               ws: Workspace = Depends(get_current_workspace)):
     try:
-        return _service().get_review(db, review_id)
+        return _service(ws.id).get_review(db, review_id)
     except FileNotFoundError as e:
         raise _as_http(e, 404) from e
     except Exception as e:  # pragma: no cover
@@ -48,9 +53,10 @@ def get_review(review_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/{review_id}", summary="删除回顾记录（同步删除知识库回顾笔记）")
-def delete_review(review_id: int, db: Session = Depends(get_db)):
+def delete_review(review_id: int, db: Session = Depends(get_db),
+                  ws: Workspace = Depends(get_current_workspace)):
     try:
-        return _service().delete_review(db, review_id)
+        return _service(ws.id).delete_review(db, review_id)
     except FileNotFoundError as e:
         raise _as_http(e, 404) from e
     except Exception as e:  # pragma: no cover

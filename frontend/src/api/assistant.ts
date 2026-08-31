@@ -1,3 +1,4 @@
+import { authFetch } from "./client";
 import type {
   AssistantSession,
   ChatMessageItem,
@@ -24,14 +25,14 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 export async function listSessions(): Promise<{ sessions: AssistantSession[] }> {
-  const res = await fetch(`${BASE}/sessions`);
+  const res = await authFetch(`${BASE}/sessions`);
   return handle(res);
 }
 
 export async function createSession(
   title?: string,
 ): Promise<{ id: number; title: string; created_at: string }> {
-  const res = await fetch(`${BASE}/sessions`, {
+  const res = await authFetch(`${BASE}/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(title ? { title } : {}),
@@ -42,7 +43,7 @@ export async function createSession(
 export async function listMessages(
   sessionId: number,
 ): Promise<{ session_id: number; messages: ChatMessageItem[] }> {
-  const res = await fetch(`${BASE}/sessions/${sessionId}/messages`);
+  const res = await authFetch(`${BASE}/sessions/${sessionId}/messages`);
   return handle(res);
 }
 
@@ -50,7 +51,7 @@ export async function renameSession(
   sessionId: number,
   title: string,
 ): Promise<{ id: number; title: string; created_at: string; updated_at: string }> {
-  const res = await fetch(`${BASE}/sessions/${sessionId}`, {
+  const res = await authFetch(`${BASE}/sessions/${sessionId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title }),
@@ -61,7 +62,7 @@ export async function renameSession(
 export async function deleteSession(
   sessionId: number,
 ): Promise<{ ok: boolean; session_id: number }> {
-  const res = await fetch(`${BASE}/sessions/${sessionId}`, { method: "DELETE" });
+  const res = await authFetch(`${BASE}/sessions/${sessionId}`, { method: "DELETE" });
   return handle(res);
 }
 
@@ -73,7 +74,7 @@ export async function streamChat(
   body: { session_id: number | null; message: string; top_k?: number },
   onEvent: (ev: SseEvent) => void,
 ): Promise<void> {
-  const res = await fetch(`${BASE}/chat/stream`, {
+  const res = await authFetch(`${BASE}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -118,7 +119,7 @@ export async function generateQuestions(
   topic?: string,
   count = 5,
 ): Promise<QuestionsResult> {
-  const res = await fetch(`${BASE}/questions`, {
+  const res = await authFetch(`${BASE}/questions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ topic: topic || null, count }),
@@ -130,7 +131,7 @@ export async function retrieveImport(
   query: string,
   limit = 10,
 ): Promise<RetrieveImportResult> {
-  const res = await fetch(`${BASE}/retrieve-import`, {
+  const res = await authFetch(`${BASE}/retrieve-import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, limit }),
@@ -143,7 +144,7 @@ export async function generateMd(body: {
   title?: string;
   target_subpath?: string;
 }): Promise<GenerateMdResult> {
-  const res = await fetch(`${BASE}/generate-md`, {
+  const res = await authFetch(`${BASE}/generate-md`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

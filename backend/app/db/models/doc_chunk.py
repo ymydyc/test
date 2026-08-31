@@ -26,4 +26,5 @@ class DocChunk(Base):
     char_end: Mapped[int] = mapped_column(Integer, nullable=False, comment="在原文中的结束字符位置")
     parent_chunk_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="父块 doc_chunks.id（父子块关联；父块自身为空）")
     chroma_id: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="对应 Chroma 向量记录 id（向量本体存 Chroma）")
+    workspace_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="所属工作区 workspaces.id（阶段七：隔离键）")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False, comment="创建时间")

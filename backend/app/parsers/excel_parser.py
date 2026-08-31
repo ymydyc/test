@@ -7,18 +7,18 @@ from app.parsers.base import DocumentParser, ParseError
 
 
 class ExcelParser(DocumentParser):
-    def parse(self, path: Path) -> str:
-        if path.suffix.lower() == ".xls":
-            return self._parse_xls(path)
-        return self._parse_xlsx(path)
+    def parse_bytes(self, data: bytes, name: str = "") -> str:
+        if Path(name or "").suffix.lower() == ".xls":
+            return self._parse_xls(data, name)
+        return self._parse_xlsx(data, name)
 
-    def _parse_xlsx(self, path: Path) -> str:
+    def _parse_xlsx(self, data: bytes, name: str = "") -> str:
         try:
             from openpyxl import load_workbook
         except ImportError as e:  # pragma: no cover
             raise ParseError("缺少依赖 openpyxl，无法解析 xlsx") from e
         try:
-            wb = load_workbook(str(path), read_only=True, data_only=True)
+            wb = load_workbook(self._stream(data), read_only=True, data_only=True)
             parts: list[str] = []
             for ws in wb.worksheets:
                 sheet_lines = [f"## Sheet: {ws.title}"]
@@ -31,15 +31,15 @@ class ExcelParser(DocumentParser):
             wb.close()
             return "\n\n".join(parts)
         except Exception as e:
-            raise ParseError(f"Excel 解析失败（{path.name}）：{e}") from e
+            raise ParseError(f"Excel 解析失败（{name or '文件'}）：{e}") from e
 
-    def _parse_xls(self, path: Path) -> str:
+    def _parse_xls(self, data: bytes, name: str = "") -> str:
         try:
             import xlrd
         except ImportError as e:  # pragma: no cover
             raise ParseError("缺少依赖 xlrd，无法解析 xls") from e
         try:
-            book = xlrd.open_workbook(str(path))
+            book = xlrd.open_workbook(file_contents=data)
             parts: list[str] = []
             for sheet in book.sheets():
                 sheet_lines = [f"## Sheet: {sheet.name}"]
@@ -51,4 +51,4 @@ class ExcelParser(DocumentParser):
                     parts.append("\n".join(sheet_lines))
             return "\n\n".join(parts)
         except Exception as e:
-            raise ParseError(f"Excel 解析失败（{path.name}）：{e}") from e
+            raise ParseError(f"Excel 解析失败（{name or '文件'}）：{e}") from e

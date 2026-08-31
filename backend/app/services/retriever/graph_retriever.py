@@ -29,6 +29,7 @@ class GraphRetriever(Retriever):
         hops: int = 1,
         seed_entities: int = 3,
         limit: int = 60,
+        workspace_id: int = 1,
     ) -> None:
         self.llm = llm
         self.vs = vs
@@ -36,6 +37,7 @@ class GraphRetriever(Retriever):
         self.hops = hops
         self.seed_entities = seed_entities
         self.limit = limit
+        self.workspace_id = workspace_id  # 工作区隔离键（阶段七：按 workspace 隔离）
 
     def retrieve(self, query: str, top_k: int | None = None) -> list[dict]:
         k = top_k or 10
@@ -43,7 +45,11 @@ class GraphRetriever(Retriever):
             return []
         try:
             qemb = self.llm.embed([query])[0]
-            seed_hits = self.vs.query(ENTITY_COLLECTION, [qemb], top_k=self.seed_entities)
+            # 实体向量检索按工作区隔离
+            seed_hits = self.vs.query(
+                ENTITY_COLLECTION, [qemb], top_k=self.seed_entities,
+                where={"workspace_id": self.workspace_id},
+            )
         except Exception as e:  # 语义定位失败 → 不能定位种子，返回空
             log.warning("图检索种子定位失败：%s", e)
             return []
@@ -52,7 +58,10 @@ class GraphRetriever(Retriever):
         if not seed_names:
             return []
         try:
-            sub = self.graph.neighbor_search(seed_names, hops=self.hops, limit=self.limit)
+            # 图多跳邻域展开同样按工作区隔离（Neo4j 侧按 workspace_id 过滤）
+            sub = self.graph.neighbor_search(
+                seed_names, hops=self.hops, limit=self.limit, workspace_id=self.workspace_id,
+            )
         except Exception as e:  # Neo4j 不可用/查询失败 → 降级
             log.warning("图多跳检索失败：%s", e)
             return []

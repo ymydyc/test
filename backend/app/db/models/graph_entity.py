@@ -23,5 +23,6 @@ class GraphEntity(Base):
     source_note_ids: Mapped[str | None] = mapped_column(Text, nullable=True, comment="关联来源笔记 ID 列表（JSON）")
     neo4j_id: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="对应 Neo4j 节点 id（用于图谱与图库对齐）")
     embedding_snapshot: Mapped[int] = mapped_column(TINYINT, default=0, nullable=False, comment="是否已生成 Embedding（1=是，0=否）")
+    workspace_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="所属工作区 workspaces.id（阶段七：隔离键）")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False, comment="创建时间")
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False, comment="更新时间")

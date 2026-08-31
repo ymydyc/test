@@ -1,3 +1,4 @@
+import { authFetch } from "./client";
 import type {
   KbNote,
   KbNoteDetail,
@@ -23,7 +24,7 @@ async function handle<T>(res: Response): Promise<T> {
 
 /** 选择性写入知识库（已导入自动跳过，返回逐项结果） */
 export async function writeSelected(paths: string[]): Promise<KbWriteResponse> {
-  const res = await fetch(`${BASE}/write`, {
+  const res = await authFetch(`${BASE}/write`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ paths }),
@@ -33,13 +34,13 @@ export async function writeSelected(paths: string[]): Promise<KbWriteResponse> {
 
 /** 知识库笔记列表 */
 export async function listNotes(): Promise<{ notes: KbNote[] }> {
-  const res = await fetch(`${BASE}/notes`);
+  const res = await authFetch(`${BASE}/notes`);
   return handle(res);
 }
 
 /** 笔记详情（含正文） */
 export async function getNote(noteId: number): Promise<KbNoteDetail> {
-  const res = await fetch(`${BASE}/notes/${noteId}`);
+  const res = await authFetch(`${BASE}/notes/${noteId}`);
   return handle(res);
 }
 
@@ -48,7 +49,7 @@ export async function saveNote(
   noteId: number,
   contentMd: string,
 ): Promise<{ note_id: number; note_path: string; import_status_reset: boolean }> {
-  const res = await fetch(`${BASE}/notes/${noteId}`, {
+  const res = await authFetch(`${BASE}/notes/${noteId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content_md: contentMd }),
@@ -60,7 +61,7 @@ export async function saveNote(
 export async function deleteNote(
   noteId: number,
 ): Promise<{ note_id: number; deleted: boolean }> {
-  const res = await fetch(`${BASE}/notes/${noteId}`, { method: "DELETE" });
+  const res = await authFetch(`${BASE}/notes/${noteId}`, { method: "DELETE" });
   return handle(res);
 }
 
@@ -68,7 +69,7 @@ export async function deleteNote(
 export async function bulkDeleteNotes(
   noteIds: number[],
 ): Promise<{ deleted: number; results: { note_id: number; status: string; reason?: string }[] }> {
-  const res = await fetch(`${BASE}/notes/bulk-delete`, {
+  const res = await authFetch(`${BASE}/notes/bulk-delete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ note_ids: noteIds }),
@@ -78,7 +79,7 @@ export async function bulkDeleteNotes(
 
 /** 解析导入区文件为 Markdown（内容区预览/编辑底稿） */
 export async function previewFile(relPath: string): Promise<KbPreview> {
-  const res = await fetch(`${BASE}/preview?rel_path=${encodeURIComponent(relPath)}`);
+  const res = await authFetch(`${BASE}/preview?rel_path=${encodeURIComponent(relPath)}`);
   return handle(res);
 }
 
@@ -87,7 +88,7 @@ export async function saveFileContent(
   relPath: string,
   content: string,
 ): Promise<{ rel_path: string; import_status: number }> {
-  const res = await fetch(`${BASE}/file-content`, {
+  const res = await authFetch(`${BASE}/file-content`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rel_path: relPath, content }),
