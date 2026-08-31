@@ -489,7 +489,7 @@ export default function GraphView() {
 
       {selected && (
         <div className="modal-overlay" onClick={() => setSelected(null)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-box node-detail-box" onClick={(e) => e.stopPropagation()}>
             <div className="modal-title">
               {selected.name}
               <span className="badge" style={{ background: colorFor(selected.entity_type) }}>

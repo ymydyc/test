@@ -218,3 +218,21 @@ button.ghost.link {
   font-weight: 500;
   vertical-align: middle;
 }
+
+/* ---------- 节点详情弹窗（内容较多，限制高度 + 内部滚动，避免超出屏幕） ---------- */
+.graph-view .node-detail-box {
+  display: flex;
+  flex-direction: column;
+  width: 520px;
+  max-width: 92vw;
+  max-height: min(76vh, 640px);
+  overflow: hidden;
+  padding: 18px;
+}
+
+.graph-view .node-detail-box .modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
