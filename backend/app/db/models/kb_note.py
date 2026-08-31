@@ -23,5 +23,6 @@ class KbNote(Base):
     content_hash: Mapped[str] = mapped_column(CHAR(64), nullable=False, comment="笔记内容哈希（变更检测/增量更新）")
     origin_import_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("import_files.id"), nullable=True, comment="来源导入文件的 import_files.id（手动新建时为空）")
     frontmatter_json: Mapped[str | None] = mapped_column(Text, nullable=True, comment="Frontmatter 元数据（JSON 字符串）")
+    workspace_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="所属工作区 workspaces.id（阶段七：隔离键）")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False, comment="创建时间")
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False, comment="更新时间")

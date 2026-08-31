@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.models import GraphEntity, GraphRelation, ImportFile, KbNote
+from app.db.scoping import workspace_scope
 
 log = get_logger("services.health")
 
@@ -30,19 +31,22 @@ WIKILINK_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
 
 
 class HealthService:
-    def __init__(self, raw_dir: Path | str | None = None, kb_dir: Path | str | None = None) -> None:
+    def __init__(self, raw_dir: Path | str | None = None, kb_dir: Path | str | None = None,
+                 workspace_id: int = 1) -> None:
         self.raw_dir = Path(raw_dir or settings.raw_dir)
         self.kb_dir = Path(kb_dir or settings.kb_dir)
+        self.workspace_id = workspace_id  # 工作区隔离键（阶段七）
 
     # ---------- 检查项 ----------
     def _isolated_entities(self, db: Session) -> list[dict]:
         """没有任何关系边的孤立实体。"""
         related: set[int] = set()
-        for r in db.query(GraphRelation.source_entity_id, GraphRelation.target_entity_id).all():
+        for r in db.query(GraphRelation.source_entity_id, GraphRelation.target_entity_id).filter(
+                workspace_scope(GraphRelation, self.workspace_id)).all():
             related.add(r[0])
             related.add(r[1])
         out: list[dict] = []
-        for e in db.query(GraphEntity).order_by(GraphEntity.id).all():
+        for e in db.query(GraphEntity).filter(workspace_scope(GraphEntity, self.workspace_id)).order_by(GraphEntity.id).all():
             if e.id not in related:
                 out.append({"id": e.id, "name": e.name, "entity_type": e.entity_type,
                             "description": e.description})
@@ -51,7 +55,7 @@ class HealthService:
     def _stale_notes(self, db: Session) -> list[dict]:
         """内容哈希与磁盘文件不一致的笔记（过时信息）。"""
         out: list[dict] = []
-        for n in db.query(KbNote).order_by(KbNote.id).all():
+        for n in db.query(KbNote).filter(workspace_scope(KbNote, self.workspace_id)).order_by(KbNote.id).all():
             f = (self.kb_dir / n.note_path).resolve()
             if not f.is_file():
                 continue  # 文件缺失单独报告
@@ -65,23 +69,23 @@ class HealthService:
 
     def _missing_note_files(self, db: Session) -> list[dict]:
         out: list[dict] = []
-        for n in db.query(KbNote).order_by(KbNote.id).all():
+        for n in db.query(KbNote).filter(workspace_scope(KbNote, self.workspace_id)).order_by(KbNote.id).all():
             f = (self.kb_dir / n.note_path).resolve()
             if not f.is_file():
                 out.append({"id": n.id, "note_path": n.note_path, "title": n.title})
         return out
 
     def _missing_import_files(self, db: Session) -> list[dict]:
+        """文件记录存在但 `import_files.content` 为空（阶段六内容存 DB，文件不应缺失字节）。"""
         out: list[dict] = []
-        for rec in db.query(ImportFile).order_by(ImportFile.id).all():
-            f = (self.raw_dir / rec.rel_path).resolve()
-            if not f.exists():
+        for rec in db.query(ImportFile).filter(workspace_scope(ImportFile, self.workspace_id)).order_by(ImportFile.id).all():
+            if not rec.is_dir and rec.content is None:
                 out.append({"id": rec.id, "rel_path": rec.rel_path, "file_name": rec.file_name})
         return out
 
     def _unregistered_files(self, db: Session) -> list[dict]:
-        """磁盘存在但 DB 无导入记录的文件（孤儿）。"""
-        registered = {r[0] for r in db.query(ImportFile.rel_path).all()}
+        """磁盘遗留文件但 DB 无导入记录（阶段六纯 DB；仅在迁移未清理磁盘时可能出现）。"""
+        registered = {r[0] for r in db.query(ImportFile.rel_path).filter(workspace_scope(ImportFile, self.workspace_id)).all()}
         out: list[dict] = []
         if not self.raw_dir.exists():
             return out
@@ -96,7 +100,7 @@ class HealthService:
     def _no_backlink_notes(self, db: Session) -> list[dict]:
         """笔记正文不含任何 [[双链]] 交叉引用（双链缺失）。"""
         out: list[dict] = []
-        for n in db.query(KbNote).order_by(KbNote.id).all():
+        for n in db.query(KbNote).filter(workspace_scope(KbNote, self.workspace_id)).order_by(KbNote.id).all():
             if not WIKILINK_RE.search(n.content_md or ""):
                 out.append({"id": n.id, "note_path": n.note_path, "title": n.title})
         return out

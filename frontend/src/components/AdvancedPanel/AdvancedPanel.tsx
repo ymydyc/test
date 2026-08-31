@@ -48,7 +48,7 @@ export default function AdvancedPanel({ onClose, onDataChanged }: AdvancedPanelP
       setReviewResult(res);
       setNotice(
         res.status === "ok"
-          ? `已生成 ${PERIOD_LABEL[periodType]}（${res.period_key}，覆盖 ${res.note_count} 条笔记）`
+          ? `已生成 ${PERIOD_LABEL[periodType]}（${res.period_key}，对话 ${res.chat_count ?? 0} 导入 ${res.import_count ?? 0} 笔记 ${res.note_count}）`
           : `跳过：${res.reason ?? res.status}`,
       );
       await loadReviews();
@@ -113,7 +113,7 @@ export default function AdvancedPanel({ onClose, onDataChanged }: AdvancedPanelP
       {tab === "review" && (
         <div className="adv-body">
           <div className="adv-section">
-            <div className="adv-section-title">生成回顾（LLM 压缩近期笔记，写入知识库 reviews/）</div>
+            <div className="adv-section-title">生成回顾（LLM 综合 AI 对话记录 + 导入文件 + 知识库笔记，汇总工作回顾报告）</div>
             <div className="adv-actions">
               <button className="primary" disabled={reviewBusy} onClick={() => handleGenerate("week")}>
                 {reviewBusy ? "生成中…" : "📝 生成周报"}
@@ -125,7 +125,12 @@ export default function AdvancedPanel({ onClose, onDataChanged }: AdvancedPanelP
             {reviewResult && reviewResult.status === "ok" && (
               <div className="adv-review-result">
                 <div className="review-result-head">
-                  已生成：{reviewResult.period_key}（{reviewResult.note_count} 条笔记）
+                  已生成：{reviewResult.period_key}
+                  <span className="review-stat">
+                    {reviewResult.chat_count ? `对话 ${reviewResult.chat_count} ` : ""}
+                    {reviewResult.import_count ? `导入 ${reviewResult.import_count} ` : ""}
+                    {reviewResult.note_count ? `笔记 ${reviewResult.note_count} ` : ""}
+                  </span>
                   <span className="review-path">{reviewResult.note_path}</span>
                 </div>
                 {reviewResult.summary_md && (

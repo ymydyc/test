@@ -22,7 +22,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.db.models import ChatMessage, ChatSession
+from app.db.models import ChatMessage, ChatSession, ImportFile
+from app.db.scoping import workspace_scope
+from app.services.import_service import ImportService
 from app.services.llm.base import LLMClient
 from app.services.llm.dashscope_client import DashScopeClient
 from app.services.llm.prompt_templates import search_answer_system
@@ -42,13 +44,23 @@ IMPORT_READ_EXT = {".md", ".markdown", ".txt", ".text"}
 
 
 class AssistantService:
-    def __init__(self, llm: LLMClient | None = None) -> None:
+    def __init__(self, llm: LLMClient | None = None, user_id: int | None = None,
+                 workspace_id: int = 1) -> None:
         self.llm = llm or DashScopeClient()
+        self.user_id = user_id       # 会话归属用户（阶段七：chat_sessions 按 user_id 区分）
+        self.workspace_id = workspace_id  # 工作区隔离键（阶段七）
 
     # ================= 会话持久化 =================
+    def _session_user_scope(self):
+        """会话查询的用户隔离过滤；user_id 未提供（如工具直连测试）时不限制。"""
+        if self.user_id is None:
+            return True
+        return ChatSession.user_id == self.user_id
+
     def list_sessions(self, db: Session, limit: int = 50) -> list[dict]:
         rows = (
             db.query(ChatSession)
+            .filter(self._session_user_scope())
             .order_by(ChatSession.updated_at.desc())
             .limit(limit)
             .all()
@@ -60,13 +72,17 @@ class AssistantService:
         ]
 
     def create_session(self, db: Session, title: str | None = None) -> dict:
-        s = ChatSession(title=title)
+        s = ChatSession(title=title, user_id=self.user_id)
         db.add(s)
         db.commit()
         db.refresh(s)
         return {"id": s.id, "title": s.title or f"会话 {s.id}", "created_at": _iso(s.created_at)}
 
     def list_messages(self, db: Session, session_id: int, limit: int = 200) -> list[dict]:
+        session = db.query(ChatSession).filter(
+            ChatSession.id == session_id, self._session_user_scope()).first()
+        if session is None:
+            return []
         rows = (
             db.query(ChatMessage)
             .filter(ChatMessage.session_id == session_id)
@@ -82,7 +98,8 @@ class AssistantService:
 
     def delete_session(self, db: Session, session_id: int) -> bool:
         """删除会话及其全部消息（级联清理）。不存在返回 False。"""
-        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        session = db.query(ChatSession).filter(
+            ChatSession.id == session_id, self._session_user_scope()).first()
         if session is None:
             return False
         db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
@@ -95,7 +112,8 @@ class AssistantService:
         title = (title or "").strip()
         if not title:
             return None
-        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        session = db.query(ChatSession).filter(
+            ChatSession.id == session_id, self._session_user_scope()).first()
         if session is None:
             return None
         session.title = title[:255]
@@ -105,7 +123,8 @@ class AssistantService:
 
     def _auto_title(self, db: Session, session_id: int, message: str) -> None:
         """没有自定义题目时，用首条提问给会话自动命名。"""
-        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        session = db.query(ChatSession).filter(
+            ChatSession.id == session_id, self._session_user_scope()).first()
         if session is not None and not (session.title or "").strip():
             session.title = (message or "").strip()[:30] or f"会话 {session.id}"
             db.commit()
@@ -122,7 +141,7 @@ class AssistantService:
     def _build_context(self, db: Session, query: str, top_k: int) -> tuple[list[str], list[dict]]:
         """把知识库/图谱混合检索结果组织成上下文文本 + 引用清单。检索失败降级为空。"""
         try:
-            coord = build_coordinator(db, top_k=top_k)
+            coord = build_coordinator(db, top_k=top_k, workspace_id=self.workspace_id)
             res = coord.search(query, top_k=top_k)
         except Exception as e:
             log.warning("对话检索失败（降级为无上下文）：%s", e)
@@ -286,13 +305,11 @@ class AssistantService:
             return default
 
     def _import_catalog(self, db: Session) -> str:
-        """导入区实时目录：列出 raw/ 下所有文件及相对路径。"""
-        if not settings.raw_dir.exists():
-            return "【导入区实时目录】\n（导入区为空）"
-        rows = [
-            f"- {p.relative_to(settings.raw_dir).as_posix()}"
-            for p in sorted(settings.raw_dir.rglob("*")) if p.is_file()
-        ]
+        """导入区实时目录：列出 DB 中当前工作区的全部文件及相对路径（阶段六纯 DB 存储）。"""
+        files = (db.query(ImportFile)
+                 .filter(ImportFile.is_dir == 0, workspace_scope(ImportFile, self.workspace_id))
+                 .order_by(ImportFile.rel_path.asc()).all())
+        rows = [f"- {rec.rel_path}" for rec in files]
         return "【导入区实时目录】\n" + ("\n".join(rows) if rows else "（导入区为空）")
 
     # ================= 出题 =================
@@ -318,7 +335,7 @@ class AssistantService:
         """出题素材：有 topic 则混合检索相关片段，否则取最近若干笔记正文。"""
         if topic and topic.strip():
             try:
-                coord = build_coordinator(db, top_k=5)
+                coord = build_coordinator(db, top_k=5, workspace_id=self.workspace_id)
                 res = coord.search(topic, top_k=5)
                 parts = [r.get("parent_text") or r.get("text") or "" for r in res.get("results", [])]
                 if parts:
@@ -326,7 +343,8 @@ class AssistantService:
             except Exception:
                 pass
         from app.db.models import KbNote
-        notes = (db.query(KbNote).filter(KbNote.content_md.isnot(None))
+        notes = (db.query(KbNote).filter(KbNote.content_md.isnot(None),
+                                         workspace_scope(KbNote, self.workspace_id))
                  .order_by(KbNote.updated_at.desc()).limit(5).all())
         if not notes:
             return "（当前知识库为空，请先写入知识库或提供主题。）"
@@ -334,42 +352,41 @@ class AssistantService:
 
     # ================= 检索导入区（原始文件） =================
     def retrieve_import(self, db: Session, query: str, limit: int) -> dict:
-        """按关键词在 raw/ 原始文件区检索文件，返回命中文件的路径、名称与内容预览。"""
+        """按关键词在导入区（DB 存储）检索文件，返回命中文件的路径、名称与内容预览。"""
         keywords = [k for k in re.split(r"[\s,，、;；]+", query.strip()) if k]
+        files = (db.query(ImportFile)
+                 .filter(ImportFile.is_dir == 0, workspace_scope(ImportFile, self.workspace_id))
+                 .order_by(ImportFile.rel_path.asc()).all())
         hits: list[dict] = []
-        if not settings.raw_dir.exists():
-            return {"ok": True, "files": [], "total": 0}
-        for p in sorted(settings.raw_dir.rglob("*")):
-            if not p.is_file():
-                continue
-            rel = p.relative_to(settings.raw_dir).as_posix()
-            snippet = self._read_snippet(p)
+        for rec in files:
+            snippet = self._read_snippet(rec.rel_path, rec.content if rec.content is not None else b"")
             # 支持按文件名或文本内容命中（大小写不敏感）
-            hay = f"{p.name}\n{snippet}".lower()
+            hay = f"{rec.file_name}\n{snippet}".lower()
             if keywords and not any(k.lower() in hay for k in keywords):
                 continue
-            info = {"path": rel, "name": p.name, "dir": PurePosixPath(rel).parent.as_posix(),
-                    "snippet": snippet}
+            info = {"path": rec.rel_path, "name": rec.file_name,
+                    "dir": PurePosixPath(rec.rel_path).parent.as_posix(), "snippet": snippet}
             hits.append(info)
             if len(hits) >= limit:
                 break
         return {"ok": True, "files": hits, "total": len(hits)}
 
     @staticmethod
-    def _read_snippet(p: Path) -> str:
-        if p.suffix.lower() not in IMPORT_READ_EXT or p.stat().st_size > 200_000:
+    def _read_snippet(rel: str, data: bytes) -> str:
+        if PurePosixPath(rel).suffix.lower() not in IMPORT_READ_EXT or len(data) > 200_000:
             return ""
         try:
-            return p.read_text(encoding="utf-8", errors="ignore")[:IMPORT_SNIPPET_CHARS]
+            return data.decode("utf-8", errors="ignore")[:IMPORT_SNIPPET_CHARS]
         except Exception:
             return ""
 
     # ================= 写文档工具（用户明确要求在导入区生成时触发） =================
     def _create_doc(self, db: Session, *, message: str, history: list[dict], context_blocks: list[str], import_snippets: list[str]) -> dict:
-        """由 LangGraph `create_doc` 节点调用：根据用户需求 + 已采集上下文，生成 Markdown 文档并落盘到导入区。
+        """由 LangGraph `create_doc` 节点调用：根据用户需求 + 已采集上下文，生成 Markdown 文档并存入导入区。
 
-        落盘规则（对齐 generate_md）：默认 raw/output/；用户明确指定且已存在的子路径则落到该处，
-        否则回退 output/。任何失败优雅返回 {"ok": False, "reason"} 而不阻断对话。
+        落盘规则（对齐 generate_md）：默认 import_files 根下 output/；用户明确指定且已存在的子路径则落到该处，
+        否则回退 output/。内容以字节写入 import_files.content（阶段六纯 DB）。任何失败优雅返回
+        {"ok": False, "reason"} 而不阻断对话。
         """
         if not settings.dashscope_api_key:
             return {"ok": False, "reason": "未配置 DASHSCOPE_API_KEY"}
@@ -423,34 +440,39 @@ class AssistantService:
             parts.append("参考导入区原始文件片段（仅作依据）：\n" + "\n\n".join(import_snippets)[:8000])
         return "\n\n".join(parts)
 
-    # ================= 生成 md（写入导入区 raw/，默认 output/） =================
+    # ================= 生成 md（写入导入区 import_files，默认 output/） =================
     def generate_md(self, db: Session, content: str, title: str | None = None, target_subpath: str | None = None) -> dict:
+        """生成 Markdown 文档并**写入导入区（MySQL import_files.content）**，默认 output/。
+
+        用户指定子路径时，仅当其目录在导入区内且已存在才使用（存在性按 DB 文件夹行判定），
+        否则回退 output/；保留防路径穿越（抛 ValueError）。返回 db 相对路径与逻辑绝对路径。
+        """
         root = settings.raw_dir.resolve()
-        root.mkdir(parents=True, exist_ok=True)
         name = _safe_basename(title) if title else datetime.now().strftime("%Y%m%d_%H%M%S")
         default_sub = "output"
 
         # 用户指定位置的候选子路径（归一化），未指定则直接用默认 output/
         sub = ((target_subpath or "").strip().replace("\\", "/").lstrip("/")) or default_sub
-        candidate = (root / PurePosixPath(sub)).resolve()
+        svc = ImportService(root, workspace_id=self.workspace_id)
+        safe_sub = svc._safe_rel(sub).as_posix() or default_sub
         # 防路径穿越：指定位置必须落在导入区之内
-        if not str(candidate).startswith(str(root)):
+        if safe_sub != sub.rstrip("/"):
             raise ValueError("不允许的路径（防路径穿越拦截）：目标超出导入区")
-        # 用户指定位置不存在时，回退到默认 output/ 文件夹
-        if not candidate.is_dir():
-            sub = default_sub
+        # 用户指定位置不存在（DB 无对应文件夹行）时，回退到默认 output/ 文件夹
+        if safe_sub != default_sub:
+            dir_rec = db.query(ImportFile).filter(
+                ImportFile.rel_path == safe_sub, ImportFile.is_dir == 1,
+                workspace_scope(ImportFile, self.workspace_id),
+            ).first()
+            if dir_rec is None:
+                safe_sub = default_sub
 
-        rel = (PurePosixPath(sub) / f"{name}.md").as_posix()
-        target = (root / rel).resolve()
-        # 防路径穿越：目标必须落在导入区之内
-        if not str(target).startswith(str(root)):
-            raise ValueError("不允许的路径（防路径穿越拦截）：目标超出导入区")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        log.info("已生成 md：%s", target)
-        return {"ok": True, "path": target.relative_to(settings.project_root).as_posix()
-                if str(target).startswith(str(settings.project_root)) else str(target),
-                "abs_path": str(target)}
+        rel = (PurePosixPath(safe_sub) / f"{name}.md").as_posix()
+        svc.ensure_file_record(db, rel, content.encode("utf-8"), import_status=0)
+        db.commit()
+        logical_abs = (root / rel).as_posix()
+        log.info("已生成 md（入库）：%s", rel)
+        return {"ok": True, "path": rel, "abs_path": logical_abs}
 
 
 def _safe_basename(title: str) -> str:

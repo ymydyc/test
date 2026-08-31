@@ -9,8 +9,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.v1.deps import get_current_workspace
 from app.core.config import settings
 from app.db.engine import get_db
+from app.db.models import Workspace
 from app.schemas.graph import SearchRequest
 from app.services.retriever import build_coordinator
 
@@ -18,11 +20,12 @@ router = APIRouter(prefix="/search", tags=["检索"])
 
 
 @router.post("", summary="混合检索（向量 + 图路径，RRF 融合）")
-def search(payload: SearchRequest, db: Session = Depends(get_db)):
+def search(payload: SearchRequest, db: Session = Depends(get_db),
+           ws: Workspace = Depends(get_current_workspace)):
     if not settings.dashscope_api_key:
         raise HTTPException(status_code=400, detail="未配置 DASHSCOPE_API_KEY，检索不可用")
     try:
-        coord = build_coordinator(db, top_k=payload.top_k)
+        coord = build_coordinator(db, top_k=payload.top_k, workspace_id=ws.id)
         return coord.search(payload.query, top_k=payload.top_k)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"检索失败：{e}") from e

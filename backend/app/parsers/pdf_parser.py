@@ -7,13 +7,13 @@ from app.parsers.base import DocumentParser, ParseError
 
 
 class PdfParser(DocumentParser):
-    def parse(self, path: Path) -> str:
+    def parse_bytes(self, data: bytes, name: str = "") -> str:
         try:
             from pypdf import PdfReader
         except ImportError as e:  # pragma: no cover
             raise ParseError("缺少依赖 pypdf，无法解析 PDF") from e
         try:
-            reader = PdfReader(str(path))
+            reader = PdfReader(self._stream(data))
             pages = []
             for page in reader.pages:
                 text = (page.extract_text() or "").strip()
@@ -21,4 +21,4 @@ class PdfParser(DocumentParser):
                     pages.append(text)
             return "\n\n".join(pages)
         except Exception as e:
-            raise ParseError(f"PDF 解析失败（{path.name}）：{e}") from e
+            raise ParseError(f"PDF 解析失败（{name or '文件'}）：{e}") from e

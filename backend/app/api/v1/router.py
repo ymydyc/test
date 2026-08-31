@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1.routers import assistant, graph, health, import_files, kb, review, search
+from app.api.v1.routers import assistant, auth, graph, health, import_files, kb, review, search, workspaces
 
 api_router = APIRouter(prefix="/api/v1")
+api_router.include_router(auth.router, prefix="/auth", tags=["认证/账号/工作区"])
+api_router.include_router(workspaces.router, prefix="", tags=["工作区/组/邀请码"])
 api_router.include_router(import_files.router, prefix="", tags=["导入区"])
 api_router.include_router(kb.router, prefix="", tags=["知识库"])
 api_router.include_router(graph.router, prefix="", tags=["图谱"])

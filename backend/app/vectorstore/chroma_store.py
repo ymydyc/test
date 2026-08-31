@@ -18,6 +18,21 @@ CHUNK_COLLECTION = "chunks"
 ENTITY_COLLECTION = "entities"
 
 
+def _where_and(filters: dict | None) -> dict | None:
+    """把多条件 where 字典归一为 Chroma 的 `$and` 表达式。
+
+    （阶段七）检索/删除常需 `{"note_id": N, "workspace_id": M}` 双条件过滤；
+    Chroma>=1.x 顶层只接受**单个**操作符，多键平铺会被校验为
+    "Expected where to have exactly one operator"，故显式拆成 `{"$and": [...]}`。
+    单键时原样返回，避免不必要的转换。
+    """
+    if not filters:
+        return filters
+    if len(filters) <= 1:
+        return filters
+    return {"$and": [{k: v} for k, v in filters.items()]}
+
+
 class ChromaVectorStore(VectorStore):
     def __init__(self, path: str | None = None, dim: int | None = None) -> None:
         self.persist_dir = path or str(settings.chroma_dir)
@@ -75,7 +90,7 @@ class ChromaVectorStore(VectorStore):
         c = self._collection(collection)
         kwargs: dict = {"query_embeddings": query_embeddings, "n_results": top_k}
         if where:
-            kwargs["where"] = where
+            kwargs["where"] = _where_and(where)
         if c.count() == 0:
             return []
         result = c.query(**kwargs)
@@ -101,7 +116,7 @@ class ChromaVectorStore(VectorStore):
 
     def delete_where(self, collection: str, where: dict) -> None:
         c = self._collection(collection)
-        existing = c.get(where=where)
+        existing = c.get(where=_where_and(where))
         ids = existing.get("ids") or []
         if ids:
             c.delete(ids=ids)

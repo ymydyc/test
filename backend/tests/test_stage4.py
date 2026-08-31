@@ -10,12 +10,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
+from app.db.models import ImportFile
 from app.services.assistant_service import AssistantService
+from app.services.import_service import ImportService
 
 DDL = {
     "chat_sessions": """
         CREATE TABLE chat_sessions (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     BIGINT,
             title       VARCHAR(255),
             created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -29,6 +32,24 @@ DDL = {
             content        TEXT NOT NULL,
             citations_json TEXT,
             created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
+    "import_files": """
+        CREATE TABLE import_files (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            rel_path       VARCHAR(1024) NOT NULL,
+            rel_path_hash  VARCHAR(64)   NOT NULL UNIQUE,
+            file_name      VARCHAR(512)  NOT NULL,
+            ext_type       VARCHAR(32)   NOT NULL,
+            is_dir         INTEGER       NOT NULL DEFAULT 0,
+            parent_path    VARCHAR(1024),
+            content_hash   CHAR(64),
+            import_status  INTEGER       NOT NULL DEFAULT 0,
+            file_size      BIGINT,
+            content        BLOB,
+            workspace_id   BIGINT,
+            created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """,
 }
@@ -88,49 +109,61 @@ def test_session_create_list_messages(db, svc):
     assert sessions[0]["title"] == "测试会话"
 
 
-# ---------- 检索导入区 ----------
+# ---------- 检索导入区（阶段六：内容存 DB） ----------
 def test_retrieve_import_by_keyword(svc, db, dirs):
     raw, _ = dirs
-    (raw / "ai").mkdir()
-    (raw / "ai" / "论文.md").write_text("机器学习综述", encoding="utf-8")
-    (raw / "笔记.txt").write_text("今天学习 RAG", encoding="utf-8")
+    ImportService(raw).save_upload(
+        db,
+        ["ai/论文.md", "笔记.txt"],
+        ["机器学习综述".encode("utf-8"), "今天学习 RAG".encode("utf-8")],
+        target_dir="",
+    )
 
     res = svc.retrieve_import(db, "论文", limit=10)
     names = [f["name"] for f in res["files"]]
     assert "论文.md" in names and "笔记.txt" not in names
     hit = next(f for f in res["files"] if f["name"] == "论文.md")
-    assert hit["snippet"] == "机器学习综述"  # 内容预览已读取
+    assert hit["snippet"] == "机器学习综述"  # 内容预览已从 DB content 读取
     assert hit["dir"] == "ai"  # 保留相对目录
 
     empty = svc.retrieve_import(db, "不存在的关键词xyz", limit=10)
     assert empty["files"] == []
 
 
-# ---------- 生成 md（写入导入区 raw/，默认 output/ + 防穿越） ----------
+# ---------- 生成 md（写入导入区 import_files.content，默认 output/ + 防穿越） ----------
+def _content_of(db, rel):
+    rec = db.query(ImportFile).filter(ImportFile.rel_path == rel).one()
+    return rec.content.decode("utf-8") if rec.content else None
+
+
 def test_generate_md_writes_to_default_output(svc, db, dirs):
     raw, _ = dirs
     res = svc.generate_md(db, "# 总结\n\n这是一份总结", title="周报 2026")
     assert res["ok"] is True
-    target = raw / "output" / "周报_2026.md"
-    assert target.exists()
-    assert target.read_text(encoding="utf-8") == "# 总结\n\n这是一份总结"
+    rel = "output/周报_2026.md"
+    assert _content_of(db, rel) == "# 总结\n\n这是一份总结"
+    assert not (raw / rel).exists()  # 内容在 DB，不再落磁盘
 
 
 def test_generate_md_subpath_exists(svc, db, dirs):
     raw, _ = dirs
-    (raw / "nested" / "deep").mkdir(parents=True)
+    imp = ImportService(raw)
+    imp.create_folder(db, "", "nested")
+    imp.create_folder(db, "nested", "deep")
     res = svc.generate_md(db, "正文", title="子", target_subpath="nested/deep")
-    assert (raw / "nested" / "deep" / "子.md").exists()
+    assert _content_of(db, "nested/deep/子.md") == "正文"
     assert "nested" in res["path"] and "deep" in res["path"]
 
 
 def test_generate_md_fallback_output_when_subpath_missing(svc, db, dirs):
     raw, _ = dirs
-    # 用户指定位置不存在 → 回退默认 output/
+    # 用户指定位置不存在（DB 无对应文件夹行）→ 回退默认 output/
     res = svc.generate_md(db, "正文", title="子", target_subpath="nested/deep")
     assert res["ok"] is True
-    assert not (raw / "nested").exists()
-    assert (raw / "output" / "子.md").exists()
+    assert _content_of(db, "output/子.md") == "正文"
+    # 未创建文件夹行
+    folders = {r.rel_path for r in db.query(ImportFile).filter(ImportFile.is_dir == 1).all()}
+    assert "nested" not in folders
 
 
 def test_generate_md_blocks_path_traversal(svc, db, dirs):

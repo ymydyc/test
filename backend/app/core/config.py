@@ -65,6 +65,8 @@ class AppConfig:
     mysql_user: str = _get("MYSQL_USER", "root")
     mysql_password: str = _get("MYSQL_PASSWORD", "")
     mysql_db: str = _get("MYSQL_DB", "RAG")
+    # 每条 MySQL 会话连接的空闲超时（秒），避免长 LLM 抽取期间连接被 wait_timeout 断开（"server has gone away"）
+    mysql_wait_timeout_keepalive: int = int(_get("MYSQL_WAIT_TIMEOUT_KEEPALIVE", "3600"))
 
     # DashScope（阶段三/四启用）
     dashscope_api_key: str = _get("DASHSCOPE_API_KEY", "")
@@ -82,6 +84,15 @@ class AppConfig:
     neo4j_user: str = _get("NEO4J_USER", "neo4j")
     neo4j_password: str = _get("NEO4J_PASSWORD", "")
     neo4j_database: str = _get("NEO4J_DATABASE", "neo4j")
+
+    # ---- 阶段七：用户系统 / 工作区隔离 / 会话 ----
+    # JWT 签名密钥（生产必改，用长随机串）与令牌有效期
+    jwt_secret: str = _get("JWT_SECRET", "second-brain-r7-dev-secret-change-me")
+    jwt_access_ttl_seconds: int = int(_get("JWT_ACCESS_TTL", "86400"))  # 24h（开发期够用）
+    jwt_refresh_ttl_seconds: int = int(_get("JWT_REFRESH_TTL", "2592000"))  # 30 天
+    # 种子测试账号密码（init_db 建立个人空间与测试账号时使用）
+    seed_test_password: str = _get("SEED_TEST_PASSWORD", "test123456")
+    seed_test_accounts: str = _get("SEED_TEST_ACCOUNTS", "test_alice,test_bob")
 
     def ensure_dirs(self) -> None:
         """确保运行所需的目录存在。"""

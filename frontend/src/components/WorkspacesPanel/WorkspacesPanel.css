@@ -1,0 +1,348 @@
+.wsp-panel {
+  position: fixed;
+  top: 48px;
+  right: 0;
+  bottom: 0;
+  z-index: 70;
+  width: 460px;
+  max-width: calc(100vw - 60px);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-left: 1px solid #e5e6eb;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.08);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.wsp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e5e6eb;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 2;
+}
+
+.wsp-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f2329;
+}
+
+.wsp-head-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.wsp-head-actions button.ghost,
+.wsp-item button.ghost,
+.wsp-member button.ghost,
+.wsp-invite-actions button.ghost,
+.wsp-danger-actions button {
+  padding: 5px 12px;
+  border: 1px solid #d9dce1;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.wsp-head-actions button.ghost:hover,
+.wsp-item button.ghost:hover,
+.wsp-member button.ghost:hover {
+  background: #f0f3f9;
+}
+
+.wsp-item button.ghost:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wsp-msg {
+  margin: 10px 14px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.wsp-msg.error {
+  background: #fff1f0;
+  color: #cf1322;
+}
+
+.wsp-msg.info {
+  background: #e6f7f8;
+  color: #0a7ea8;
+}
+
+.wsp-section {
+  padding: 12px 14px;
+  border-bottom: 1px solid #f0f1f4;
+}
+
+.wsp-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #444a53;
+  margin-bottom: 8px;
+}
+
+.wsp-inline-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.wsp-inline-form .wsp-input {
+  flex: 1;
+}
+
+.wsp-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #d9dce1;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 8px;
+  outline: none;
+}
+
+.wsp-input:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.15);
+}
+
+.wsp-code-input {
+  letter-spacing: 2px;
+}
+
+button.primary {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+button.primary:hover {
+  background: #0f63d8;
+}
+
+button.primary:disabled {
+  background: #a6c6f7;
+  cursor: default;
+}
+
+button.danger {
+  border-color: #ffccc7 !important;
+  color: #cf1322;
+  background: #fff !important;
+}
+
+button.danger:hover {
+  background: #fff1f0 !important;
+}
+
+.wsp-empty {
+  color: #8a9199;
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.wsp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wsp-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+}
+
+.wsp-item.active {
+  border-color: #1677ff;
+  background: #f0f7ff;
+}
+
+.wsp-type {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.wsp-type.personal {
+  background: #ecf5ec;
+  color: #389e0d;
+}
+
+.wsp-type.group {
+  background: #eef4ff;
+  color: #1677ff;
+}
+
+.wsp-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.wsp-item-name {
+  font-size: 14px;
+  color: #1f2329;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wsp-item-sub {
+  font-size: 12px;
+  color: #8a9199;
+}
+
+.wsp-item-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.wsp-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f2329;
+  flex-wrap: wrap;
+}
+
+.wsp-role-chip {
+  font-size: 11px;
+  font-weight: 400;
+  color: #1677ff;
+  background: #eef4ff;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.wsp-desc {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #666c73;
+}
+
+.wsp-invite-box,
+.wsp-edit-box {
+  margin-top: 12px;
+  padding: 10px;
+  background: #fafbfc;
+  border: 1px dashed #d9dce1;
+  border-radius: 8px;
+}
+
+.wsp-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wsp-invite-code {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: #c41d7f;
+  background: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #e5e6eb;
+}
+
+.wsp-invite-count {
+  font-family: monospace;
+  font-size: 13px;
+  color: #1677ff;
+}
+
+.wsp-invite-count.expired {
+  color: #cf1322;
+}
+
+.wsp-invite-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.wsp-edit-box .wsp-input {
+  margin-bottom: 8px;
+}
+
+.wsp-member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wsp-member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid #f0f1f4;
+  border-radius: 6px;
+}
+
+.wsp-member-name {
+  flex: 1;
+  font-size: 13.5px;
+  color: #1f2329;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wsp-member-role {
+  font-size: 11px;
+  color: #1677ff;
+  background: #eef4ff;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.wsp-me {
+  font-size: 11px;
+  color: #389e0d;
+  background: #ecf5ec;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.wsp-member-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.wsp-danger-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.wsp-danger-actions button {
+  flex: 1;
+}

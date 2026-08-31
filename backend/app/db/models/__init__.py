@@ -8,6 +8,10 @@ from app.db.models.sync_state import SyncState
 from app.db.models.chat import ChatSession, ChatMessage
 from app.db.models.memo import Memo
 from app.db.models.review import ReviewRecord
+from app.db.models.user import User
+from app.db.models.workspace import Workspace, WorkspaceMember
+from app.db.models.workspace_invite import WorkspaceInvite
+from app.db.models.auth_session import AuthSession
 
 __all__ = [
     "ImportFile",
@@ -20,4 +24,9 @@ __all__ = [
     "ChatMessage",
     "Memo",
     "ReviewRecord",
+    "User",
+    "Workspace",
+    "WorkspaceMember",
+    "WorkspaceInvite",
+    "AuthSession",
 ]

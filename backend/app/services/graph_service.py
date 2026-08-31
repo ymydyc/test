@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.models import DocChunk, GraphEntity, GraphRelation, KbNote
+from app.db.scoping import workspace_scope
 from app.graphdb.base import GraphStore
 from app.graphdb.neo4j_driver import Neo4jGraphStore
 from app.services.llm.base import LLMClient
@@ -41,10 +42,12 @@ class GraphService:
         llm: LLMClient | None = None,
         vs: VectorStore | None = None,
         graph: GraphStore | None = None,
+        workspace_id: int = 1,
     ) -> None:
         self.llm = llm or DashScopeClient()
         self.vs = vs or ChromaVectorStore()
         self.graph = graph or Neo4jGraphStore()
+        self.workspace_id = workspace_id  # 工作区隔离键（阶段七：按 workspace 隔离）
         self._graph_ok: bool | None = None
 
     def graph_available(self) -> bool:
@@ -68,10 +71,11 @@ class GraphService:
             return {"indexed": 0, "reason": "无子块"}
         texts = [c.chunk_text for c in chunks]
         embs = self.llm.embed(texts)
-        self.vs.delete_where(CHUNK_COLLECTION, {"note_id": note_id})
+        # 向量删除与写入均带工作区隔离键，防止跨空间误删/混入他人子块
+        self.vs.delete_where(CHUNK_COLLECTION, {"note_id": note_id, "workspace_id": self.workspace_id})
         ids = [f"n{note_id}c{c.id}" for c in chunks]
         metas = [{"note_id": note_id, "chunk_id": c.id, "parent_chunk_id": c.parent_chunk_id or 0,
-                  "chunk_index": c.chunk_index} for c in chunks]
+                  "chunk_index": c.chunk_index, "workspace_id": self.workspace_id} for c in chunks]
         self.vs.add_many(CHUNK_COLLECTION, ids, embs, texts, metas)
         for c, cid in zip(chunks, ids):
             c.chroma_id = cid
@@ -80,14 +84,15 @@ class GraphService:
         return {"indexed": len(chunks)}
 
     def remove_note_vectors(self, db: Session, note_id: int) -> None:
-        self.vs.delete_where(CHUNK_COLLECTION, {"note_id": note_id})
+        self.vs.delete_where(CHUNK_COLLECTION, {"note_id": note_id, "workspace_id": self.workspace_id})
 
     # ================= 图谱增量构建 =================
     def build_note_graph(self, db: Session, note_id: int) -> dict:
         """LLM 抽取实体/关系 → 去重合并 → 写 MySQL + 同步 Neo4j。"""
         if not settings.dashscope_api_key:
             return {"status": "skipped", "reason": "缺少 DASHSCOPE_API_KEY"}
-        note = db.query(KbNote).filter(KbNote.id == note_id).first()
+        note = db.query(KbNote).filter(
+            KbNote.id == note_id, workspace_scope(KbNote, self.workspace_id)).first()
         if note is None:
             return {"status": "error", "reason": "笔记不存在"}
         content = note.content_md or ""
@@ -96,7 +101,9 @@ class GraphService:
             return {"status": "skipped", "reason": "无可抽取实体"}
 
         # 先移除该笔记旧的独占关系（MySQL+Neo4j），再做增量重建
-        old_rels = db.query(GraphRelation).filter(GraphRelation.source_note_id == note_id).all()
+        old_rels = db.query(GraphRelation).filter(
+            GraphRelation.source_note_id == note_id,
+            workspace_scope(GraphRelation, self.workspace_id)).all()
         self.remove_relations_for_note(db, note_id)
 
         entity_id_by_name: dict[str, int] = {}
@@ -195,12 +202,16 @@ class GraphService:
         return json.loads(text)
 
     def _upsert_entity(self, db: Session, note_id: int, name: str, entity_type: str | None, desc: str | None) -> int:
-        """实体去重合并（向量相似度匹配全局实体），返回图实体 id。"""
-        existing = db.query(GraphEntity).filter(GraphEntity.name == name).first()
+        """实体去重合并（向量相似度匹配同工作区实体），返回图实体 id。"""
+        # 实体按 (name, workspace_id) 隔离：同名字跨工作区可各自存在
+        existing = db.query(GraphEntity).filter(
+            GraphEntity.name == name, workspace_scope(GraphEntity, self.workspace_id)).first()
         if existing is None:
             target_id = self._find_similar_entity(db, name)
             if target_id is not None:
-                existing = db.query(GraphEntity).filter(GraphEntity.id == target_id).first()
+                existing = db.query(GraphEntity).filter(
+                    GraphEntity.id == target_id,
+                    workspace_scope(GraphEntity, self.workspace_id)).first()
         if existing is not None:
             src = self._note_ids(existing.source_note_ids)
             if note_id not in src:
@@ -211,9 +222,10 @@ class GraphService:
             self._ensure_entity_embedding(db, existing, name)
             return existing.id
         ent = GraphEntity(
-            name=name, name_hash=_name_hash(name),
+            name=name, name_hash=_name_hash(name, self.workspace_id),
             entity_type=entity_type or "概念", description=desc,
             source_note_ids=json.dumps([note_id], ensure_ascii=False),
+            workspace_id=self.workspace_id,
         )
         db.add(ent)
         db.flush()  # 拿到自增 id 用于 embedding 关联
@@ -221,10 +233,11 @@ class GraphService:
         return ent.id
 
     def _find_similar_entity(self, db: Session, name: str) -> int | None:
-        """用实体名向量在全局实体库语义匹配，命中阈值返回其 id（合并重复概念）。"""
+        """用实体名向量在同工作区实体库语义匹配，命中阈值返回其 id（合并重复概念）。"""
         try:
             emb = self.llm.embed([name])[0]
-            hits = self.vs.query(ENTITY_COLLECTION, [emb], top_k=3)
+            hits = self.vs.query(ENTITY_COLLECTION, [emb], top_k=3,
+                                 where={"workspace_id": self.workspace_id})
         except Exception as e:
             log.warning("实体相似匹配失败：%s", e)
             return None
@@ -236,11 +249,13 @@ class GraphService:
         return None
 
     def _ensure_entity_embedding(self, db: Session, ent: GraphEntity, name: str) -> None:
-        """为实体生成/更新其 Embedding 快照（用于后续去重）。"""
+        """为实体生成/更新其 Embedding 快照（用于后续同工作区去重）。"""
         try:
             emb = self.llm.embed([name])[0]
             eid = f"ent:{ent.id}"
-            self.vs.add(ENTITY_COLLECTION, eid, emb, name, {"entity_id": ent.id, "name": name})
+            # 实体向量元数据带 workspace_id，检索时按工作区过滤
+            self.vs.add(ENTITY_COLLECTION, eid, emb, name,
+                        {"entity_id": ent.id, "name": name, "workspace_id": self.workspace_id})
             ent.embedding_snapshot = 1
         except Exception as e:
             log.warning("实体 Embedding 失败：%s", e)
@@ -250,14 +265,15 @@ class GraphService:
             db.query(GraphRelation)
             .filter(GraphRelation.source_entity_id == sid,
                     GraphRelation.target_entity_id == tid,
-                    GraphRelation.relation_type == rt)
+                    GraphRelation.relation_type == rt,
+                    workspace_scope(GraphRelation, self.workspace_id))
             .first()
         )
         if dup is not None:  # 同对实体同类型关系去重（合并来源笔记）
             return
         db.add(GraphRelation(
             source_entity_id=sid, target_entity_id=tid, relation_type=rt,
-            description=desc, source_note_id=note_id,
+            description=desc, source_note_id=note_id, workspace_id=self.workspace_id,
         ))
 
     def _sync_to_neo4j(self, db: Session, note_id: int) -> None:
@@ -267,26 +283,38 @@ class GraphService:
             return
         # 会话配置了 autoflush=False：刚 add 的实体/关系需显式落库后查询才可见
         db.flush()
-        rels = db.query(GraphRelation).filter(GraphRelation.source_note_id == note_id).all()
+        rels = db.query(GraphRelation).filter(
+            GraphRelation.source_note_id == note_id,
+            workspace_scope(GraphRelation, self.workspace_id)).all()
         ent_ids = {r.source_entity_id for r in rels} | {r.target_entity_id for r in rels}
-        ents = db.query(GraphEntity).filter(GraphEntity.id.in_(list(ent_ids) or [0])).all()
+        ents = db.query(GraphEntity).filter(
+            GraphEntity.id.in_(list(ent_ids) or [0]),
+            workspace_scope(GraphEntity, self.workspace_id)).all()
         for ent in ents:
-            self.graph.upsert_entity(ent.name, ent.entity_type, ent.description)
+            self.graph.upsert_entity(ent.name, ent.entity_type, ent.description,
+                                     workspace_id=self.workspace_id)
             ent.neo4j_id = ent.name
         for rel in rels:
-            s = db.query(GraphEntity).filter(GraphEntity.id == rel.source_entity_id).first()
-            t = db.query(GraphEntity).filter(GraphEntity.id == rel.target_entity_id).first()
+            s = db.query(GraphEntity).filter(
+                GraphEntity.id == rel.source_entity_id,
+                workspace_scope(GraphEntity, self.workspace_id)).first()
+            t = db.query(GraphEntity).filter(
+                GraphEntity.id == rel.target_entity_id,
+                workspace_scope(GraphEntity, self.workspace_id)).first()
             if s and t:
                 self.graph.upsert_relation(rel.relation_type, s.name, t.name, rel.description,
-                                           rel.source_note_id, str(rel.id))
+                                           rel.source_note_id, str(rel.id),
+                                           workspace_id=self.workspace_id)
                 rel.neo4j_rel_id = str(rel.id)
 
     # ================= 清理 =================
     def remove_relations_for_note(self, db: Session, note_id: int) -> None:
-        db.query(GraphRelation).filter(GraphRelation.source_note_id == note_id).delete()
+        db.query(GraphRelation).filter(
+            GraphRelation.source_note_id == note_id,
+            workspace_scope(GraphRelation, self.workspace_id)).delete()
         if self.graph_available():
             try:
-                self.graph.remove_relations_for_note(note_id)
+                self.graph.remove_relations_for_note(note_id, workspace_id=self.workspace_id)
             except Exception as e:
                 log.warning("Neo4j 关系清理失败：%s", e)
 
@@ -298,18 +326,20 @@ class GraphService:
     # ================= 图谱删除 =================
     def delete_entity(self, db: Session, name: str) -> dict:
         """删除实体节点：先清其全部关系（MySQL 权威 + Neo4j），再删实体、移除实体向量。"""
-        ent = db.query(GraphEntity).filter(GraphEntity.name == name).first()
+        ent = db.query(GraphEntity).filter(
+            GraphEntity.name == name, workspace_scope(GraphEntity, self.workspace_id)).first()
         if ent is None:
             raise FileNotFoundError("实体不存在")
         eid = ent.id
         db.query(GraphRelation).filter(
-            (GraphRelation.source_entity_id == eid) | (GraphRelation.target_entity_id == eid)
+            (GraphRelation.source_entity_id == eid) | (GraphRelation.target_entity_id == eid),
+            workspace_scope(GraphRelation, self.workspace_id),
         ).delete()
         db.delete(ent)
         db.commit()
         if self.graph_available():
             try:
-                self.graph.detach_entity(name)
+                self.graph.detach_entity(name, workspace_id=self.workspace_id)
             except Exception as e:
                 log.warning("Neo4j 实体删除失败：%s", e)
         try:
@@ -321,14 +351,17 @@ class GraphService:
 
     def delete_relation(self, db: Session, source: str, target: str, relation_type: str) -> dict:
         """删除指定关系边（MySQL 权威 + Neo4j 同步）。"""
-        s = db.query(GraphEntity).filter(GraphEntity.name == source).first()
-        t = db.query(GraphEntity).filter(GraphEntity.name == target).first()
+        s = db.query(GraphEntity).filter(
+            GraphEntity.name == source, workspace_scope(GraphEntity, self.workspace_id)).first()
+        t = db.query(GraphEntity).filter(
+            GraphEntity.name == target, workspace_scope(GraphEntity, self.workspace_id)).first()
         if s is None or t is None:
             raise FileNotFoundError("关联实体不存在")
         rel = db.query(GraphRelation).filter(
             GraphRelation.source_entity_id == s.id,
             GraphRelation.target_entity_id == t.id,
             GraphRelation.relation_type == relation_type,
+            workspace_scope(GraphRelation, self.workspace_id),
         ).first()
         if rel is None:
             raise FileNotFoundError("关系不存在")
@@ -336,7 +369,8 @@ class GraphService:
         db.commit()
         if self.graph_available():
             try:
-                self.graph.remove_relation(source, target, relation_type)
+                self.graph.remove_relation(source, target, relation_type,
+                                           workspace_id=self.workspace_id)
             except Exception as e:
                 log.warning("Neo4j 关系删除失败：%s", e)
         log.info("图谱关系已删除：%s→%s·%s", source, target, relation_type)
@@ -353,6 +387,7 @@ class GraphService:
             return []
 
 
-def _name_hash(name: str) -> str:
+def _name_hash(name: str, workspace_id: int) -> str:
     import hashlib
-    return hashlib.sha256(name.encode("utf-8")).hexdigest()
+    # 阶段七：把 workspace_id 纳入哈希盐，跨工作区同名实体各自独立唯一（graph_entities.name_hash 唯一约束）
+    return hashlib.sha256(f"{workspace_id}\x00{name}".encode("utf-8")).hexdigest()

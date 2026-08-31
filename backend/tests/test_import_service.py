@@ -39,6 +39,8 @@ def db():
                 content_hash   CHAR(64),
                 import_status  INTEGER       NOT NULL DEFAULT 0,
                 file_size      BIGINT,
+                content        BLOB,
+                workspace_id   BIGINT,
                 created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -54,6 +56,7 @@ def db():
                 content_hash      CHAR(64)      NOT NULL,
                 origin_import_id  BIGINT,
                 frontmatter_json  TEXT,
+                workspace_id      BIGINT,
                 created_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -72,40 +75,48 @@ def service(raw_dir: Path):
 def test_save_upload_preserves_structure(service, db, raw_dir):
     svc = service
     svc.save_upload(db, ["a/b/c.txt", "root.md"], [b"hello", b"# t"], target_dir="")
-    assert (raw_dir / "a" / "b" / "c.txt").exists()
-    assert (raw_dir / "root.md").exists()
     rec = db.query(ImportFile).filter(ImportFile.rel_path == "a/b/c.txt").one()
     assert rec.import_status == 0
-    assert rec.rel_path_hash == ImportService._rel_hash("a/b/c.txt")
+    assert rec.rel_path_hash == svc._rel_hash("a/b/c.txt")
     assert len(rec.content_hash) == 64
+    # 阶段六：内容不再落本地磁盘，而是存 DB content
+    assert rec.content == b"hello"
+    assert rec.file_size == 5
+    assert not (raw_dir / "a" / "b" / "c.txt").exists()
+    # get_content 从 DB 读取等价内容
+    assert service.get_content(db, "a/b/c.txt") == b"hello"
+    assert service.get_content(db, "root.md") == b"# t"
 
 
-def test_rename_updates_fs_and_db(service, db, raw_dir):
+def test_rename_updates_db(service, db, raw_dir):
     svc = service
     svc.save_upload(db, ["old.txt"], [b"data"], target_dir="")
     svc.rename(db, "old.txt", "new.txt")
-    assert (raw_dir / "new.txt").exists()
-    assert not (raw_dir / "old.txt").exists()
     rec = db.query(ImportFile).filter(ImportFile.rel_path == "new.txt").one()
     assert rec.file_name == "new.txt"
-    assert rec.rel_path_hash == ImportService._rel_hash("new.txt")
+    assert rec.rel_path_hash == svc._rel_hash("new.txt")
+    # 重命名仅改路径，内容保留在 DB
+    assert rec.content == b"data"
+    assert not (raw_dir / "old.txt").exists()
 
 
 def test_rename_moves_children(service, db, raw_dir):
     svc = service
     svc.save_upload(db, ["d/f1.txt", "d/f2.txt"], [b"1", b"2"], target_dir="")
     svc.rename(db, "d", "d2")
-    assert (raw_dir / "d2" / "f1.txt").exists()
+    # 文件夹行与子文件行一并迁移（文件夹在 DB 中以 is_dir=1 行表示）
     recs = {r.rel_path for r in db.query(ImportFile).all()}
-    assert recs == {"d2/f1.txt", "d2/f2.txt"}
+    dirs = {r.rel_path for r in db.query(ImportFile).filter(ImportFile.is_dir == 1).all()}
+    assert recs == {"d2", "d2/f1.txt", "d2/f2.txt"}
+    assert dirs == {"d2"}
 
 
 def test_delete_recursive(service, db, raw_dir):
     svc = service
     svc.save_upload(db, ["d/f1.txt", "d/f2.txt"], [b"1", b"2"], target_dir="")
     svc.delete(db, "d")
-    assert not (raw_dir / "d").exists()
     assert db.query(ImportFile).count() == 0
+    assert service.get_content(db, "d/f1.txt") is None
 
 
 def test_dir_import_status(service, db, raw_dir):

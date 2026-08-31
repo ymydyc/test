@@ -4,10 +4,15 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
+
+# 图谱/向量构建会在 LLM 抽取期间长时间无 MySQL 流量；若沿用 MySQL 默认 wait_timeout
+# （本机实测 120s），长笔记构建时连接会被服务端空闲超时断开，抛 "server has gone away"，
+# 导致后续写入失败、图谱无法构建。故在每条物理连接建立时将会话空闲超时统一调长。
+_MTY_KEEPALIVE = int(settings.mysql_wait_timeout_keepalive or 3600)
 
 
 def build_url(host=None, port=None, user=None, password=None, db=None) -> str:
@@ -37,6 +42,21 @@ admin_engine = create_engine(
     echo=False,
     future=True,
 )
+
+
+@event.listens_for(engine, "connect")
+def _raise_session_timeout(dbapi_conn, _record) -> None:  # type: ignore[no-untyped-def]
+    _set_session_keepalive(dbapi_conn)
+
+
+@event.listens_for(admin_engine, "connect")
+def _raise_admin_session_timeout(dbapi_conn, _record) -> None:  # type: ignore[no-untyped-def]
+    _set_session_keepalive(dbapi_conn)
+
+
+def _set_session_keepalive(dbapi_conn) -> None:  # type: ignore[no-untyped-def]
+    dbapi_conn.cursor().execute(f"SET SESSION wait_timeout = {_MTY_KEEPALIVE}")
+
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 

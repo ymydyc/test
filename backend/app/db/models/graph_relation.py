@@ -26,4 +26,5 @@ class GraphRelation(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True, comment="关系描述（LLM 撰写）")
     source_note_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("kb_notes.id"), nullable=True, comment="来源笔记 kb_notes.id")
     neo4j_rel_id: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="对应 Neo4j 关系 id")
+    workspace_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="所属工作区 workspaces.id（阶段七：隔离键）")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False, comment="创建时间")

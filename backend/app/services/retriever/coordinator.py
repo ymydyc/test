@@ -25,11 +25,14 @@ class SearchCoordinator:
         if vector_retriever is not None and all(r is not vector_retriever for r in self.retrievers):
             self.retrievers.append(vector_retriever)
 
-    def search(self, query: str, top_k: int = 8) -> dict:
+    def search(self, query: str, top_k: int = 8, workspace_id: int | None = None) -> dict:
         """执行混合检索，返回 {query, results:[...], sources}。
 
         results 每项：{id,title,text,parent_text,score,retriever,metadata}
         其中 score 为 RRF 融合分；sources['vector']/['graph'] 保留各自原始列表以便前端展示。
+
+        workspace_id：显式传入时覆盖到每个检索器做工作区隔离；为 None 时沿用检索器
+        构造时已设置的 workspace_id（兼容旧式未按工作区构造的检索器，默认 1）。
         """
         sources: dict[str, list] = {}
         rank_lists: list[list[tuple[int, dict]]] = []  # 每个 retriever 的 (原始rank, result)
@@ -37,6 +40,12 @@ class SearchCoordinator:
         for ret in self.retrievers:
             name = getattr(ret, "name", type(ret).__name__)
             try:
+                # 透传工作区隔离键（构造时未带的检索器在此回填；_FakeRetriever 等无此属性则跳过）
+                if workspace_id is not None:
+                    try:
+                        ret.workspace_id = workspace_id
+                    except AttributeError:
+                        pass
                 items = ret.retrieve(query, top_k=top_k * 2)
             except Exception as e:  # 单个检索器失败不阻断整体
                 log.warning("检索器 %s 失败：%s", name, e)

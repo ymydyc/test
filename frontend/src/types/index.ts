@@ -144,6 +144,38 @@ export interface GenerateMdResult {
   abs_path: string;
 }
 
+// ---------- 阶段八 工作区/组/邀请码 ----------
+export interface WorkspaceInfo {
+  id: number;
+  name: string;
+  type: string;
+  role?: string | null;
+}
+
+export interface WorkspaceMember {
+  user_id: number;
+  username: string | null;
+  display_name: string | null;
+  role: string;
+}
+
+export interface WorkspaceDetail {
+  id: number;
+  name: string;
+  type: string;
+  creator_id: number;
+  description: string | null;
+  created_at: string | null;
+  members: WorkspaceMember[];
+  role: string | null;
+}
+
+export interface InviteInfo {
+  workspace_id: number;
+  code: string;
+  expires_at: string;
+}
+
 // ---------- 阶段五（FR-09 周期回顾 / FR-10 健康检查 / FR-12 网页剪藏）----------
 export interface ReviewRecord {
   id: number;
@@ -162,6 +194,8 @@ export interface ReviewGenerateResult {
   period_type: string;
   period_key: string;
   note_count: number;
+  chat_count?: number;
+  import_count?: number;
   note_id?: number;
   note_path?: string;
   summary_md?: string;

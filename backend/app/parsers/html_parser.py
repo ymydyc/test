@@ -7,7 +7,7 @@ from app.parsers.base import DocumentParser, ParseError
 
 
 class HtmlParser(DocumentParser):
-    def parse(self, path: Path) -> str:
+    def parse_bytes(self, data: bytes, name: str = "") -> str:
         try:
             import html2text
         except ImportError as e:  # pragma: no cover
@@ -17,7 +17,10 @@ class HtmlParser(DocumentParser):
             h.body_width = 0            # 不自动折行
             h.ignore_images = True      # 阶段二不处理图片
             h.ignore_emphasis = False
-            html = path.read_text(encoding="utf-8", errors="replace")
+            html = data.decode("utf-8", errors="replace")
             return h.handle(html).strip()
         except Exception as e:
-            raise ParseError(f"HTML 解析失败（{path.name}）：{e}") from e
+            raise ParseError(f"HTML 解析失败（{name or '文件'}）：{e}") from e
+
+    def parse(self, path: Path) -> str:
+        return self.parse_bytes(path.read_bytes(), path.name)

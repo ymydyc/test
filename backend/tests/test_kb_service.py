@@ -1,6 +1,7 @@
 """知识库业务服务单元测试（临时目录 + SQLite，不依赖真实数据）。"""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -26,6 +27,8 @@ DDL = {
             content_hash   CHAR(64),
             import_status  INTEGER       NOT NULL DEFAULT 0,
             file_size      BIGINT,
+            content        BLOB,
+            workspace_id   BIGINT,
             created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -40,6 +43,7 @@ DDL = {
             content_hash      CHAR(64)      NOT NULL,
             origin_import_id  BIGINT,
             frontmatter_json  TEXT,
+            workspace_id      BIGINT,
             created_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -54,6 +58,7 @@ DDL = {
             char_end    INTEGER NOT NULL,
             parent_chunk_id BIGINT,
             chroma_id   VARCHAR(128),
+            workspace_id BIGINT,
             created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """,
@@ -67,6 +72,7 @@ DDL = {
             source_note_ids   TEXT,
             neo4j_id          VARCHAR(128),
             embedding_snapshot INTEGER NOT NULL DEFAULT 0,
+            workspace_id       BIGINT,
             created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -80,6 +86,7 @@ DDL = {
             description       TEXT,
             source_note_id    BIGINT,
             neo4j_rel_id      VARCHAR(128),
+            workspace_id       BIGINT,
             created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """,
@@ -299,8 +306,12 @@ def test_save_file_edit_resets_marker(svc, imp, db, dirs):
     svc.save_file_edit(db, "a.txt", "在内容区直接编辑的内容")
     db.refresh(rec)
     assert rec.import_status == 0
-    assert (raw / "a.txt").read_text(encoding="utf-8") == "在内容区直接编辑的内容"
-    assert rec.content_hash == ImportService._hash(raw / "a.txt")
+    # 阶段六：编辑内容直接写回 DB content，不再落本地磁盘
+    new_bytes = "在内容区直接编辑的内容".encode("utf-8")
+    assert rec.content == new_bytes
+    assert rec.file_size == len(new_bytes)
+    assert rec.content_hash == hashlib.sha256(new_bytes).hexdigest()
+    assert not (raw / "a.txt").exists()
 
 
 def test_save_file_edit_rejects_binary(svc, imp, db, dirs):
@@ -338,11 +349,11 @@ def test_delete_note_keeps_shared_entity(svc, imp, db, dirs):
 
     # 手动构造实体：孤立实体(仅 note_a 引用) 与共享实体(note_a+note_b 引用)
     orphan = GraphEntity(
-        name="孤立实体", name_hash=KbService._rel_hash("孤立实体"),
+        name="孤立实体", name_hash=KbService._sha("孤立实体"),
         entity_type="概念", source_note_ids=json.dumps([note_a.id]),
     )
     shared = GraphEntity(
-        name="共享实体", name_hash=KbService._rel_hash("共享实体"),
+        name="共享实体", name_hash=KbService._sha("共享实体"),
         entity_type="概念", source_note_ids=json.dumps([note_a.id, note_b.id]),
     )
     db.add_all([orphan, shared])

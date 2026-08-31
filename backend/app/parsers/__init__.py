@@ -8,6 +8,7 @@ from app.parsers.base import (
     DocumentParser,
     ParseError,
     get_parser,
+    parse_bytes,
     parse_file,
     register,
     set_fallback,
@@ -34,5 +35,5 @@ register(HtmlParser(), "html", "htm")
 set_fallback(_text)
 
 __all__ = [
-    "DocumentParser", "ParseError", "get_parser", "parse_file", "register",
+    "DocumentParser", "ParseError", "get_parser", "parse_bytes", "parse_file", "register",
 ]

@@ -3,6 +3,8 @@
 - 周记：每周一 08:00 生成上一周回顾。
 - 月报：每月 1 日 08:00 生成上月回顾。
 - 复用 ReviewService.generate_review 单一入口；无 DASHSCOPE_API_KEY 时自动跳过（不报错）。
+- 调度器无用户上下文，仅采集导入文件目录和知识库笔记目录（不含 AI 对话记录）。
+- 手动触发（API）可携带用户 ID，额外采集 AI 对话记录。
 - 随 FastAPI lifespan 启停；调度失败不影响主流程。
 """
 from __future__ import annotations

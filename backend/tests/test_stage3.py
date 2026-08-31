@@ -25,6 +25,7 @@ DDL = {
             content_hash CHAR(64) NOT NULL,
             origin_import_id BIGINT,
             frontmatter_json TEXT,
+            workspace_id BIGINT,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -39,6 +40,7 @@ DDL = {
             char_end INTEGER NOT NULL,
             parent_chunk_id BIGINT,
             chroma_id VARCHAR(128),
+            workspace_id BIGINT,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """,
@@ -52,6 +54,7 @@ DDL = {
             source_note_ids TEXT,
             neo4j_id VARCHAR(128),
             embedding_snapshot INTEGER NOT NULL DEFAULT 0,
+            workspace_id BIGINT,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -65,6 +68,7 @@ DDL = {
             description TEXT,
             source_note_id BIGINT,
             neo4j_rel_id VARCHAR(128),
+            workspace_id BIGINT,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """,
@@ -119,7 +123,7 @@ class _MockGraph:
     def health(self):
         return {"ok": True}
 
-    def neighbor_search(self, names, hops=1, limit=50):
+    def neighbor_search(self, names, hops=1, limit=50, **kwargs):
         return {
             "nodes": [{"name": n, "entity_type": "概念"} for n in names],
             "edges": [],
@@ -292,13 +296,13 @@ def test_sync_to_neo4j_flushes_pending_relations(monkeypatch):
         def health(self):
             return {"ok": True}
 
-        def upsert_entity(self, name, t, d):
+        def upsert_entity(self, name, t, d, **kwargs):
             self.ups.append((name, t))
 
-        def upsert_relation(self, rt, s, t, d, sn, mid):
+        def upsert_relation(self, rt, s, t, d, sn, mid, **kwargs):
             self.ups.append(("R", s, t))
 
-        def remove_relations_for_note(self, n):
+        def remove_relations_for_note(self, n, **kwargs):
             pass
 
     graph = _Graph()

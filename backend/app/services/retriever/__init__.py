@@ -13,11 +13,13 @@ from app.services.retriever.vector_retriever import VectorRetriever
 from app.vectorstore.chroma_store import ChromaVectorStore
 
 
-def build_coordinator(db: Session, top_k: int = 8) -> SearchCoordinator:
-    """构建混合检索协调器（向量 + 图；图依赖 Neo4j，失败自动降级）。"""
+def build_coordinator(db: Session, top_k: int = 8, workspace_id: int = 1) -> SearchCoordinator:
+    """构建混合检索协调器（向量 + 图；图依赖 Neo4j，失败自动降级）。
+    工作区隔离：检索器按 workspace_id 过滤向量与图谱数据（阶段七）。
+    """
     llm = DashScopeClient()
     vs = ChromaVectorStore()
-    vector = VectorRetriever(llm=llm, vs=vs, db=db, top_k=top_k)
+    vector = VectorRetriever(llm=llm, vs=vs, db=db, top_k=top_k, workspace_id=workspace_id)
     graph_store: Neo4jGraphStore | None = None
     try:
         gs = Neo4jGraphStore()
@@ -26,7 +28,10 @@ def build_coordinator(db: Session, top_k: int = 8) -> SearchCoordinator:
             graph_store = gs
     except Exception:
         graph_store = None
-    graph = GraphRetriever(llm=llm, vs=vs, graph=graph_store) if graph_store else None
+    graph = (
+        GraphRetriever(llm=llm, vs=vs, graph=graph_store, workspace_id=workspace_id)
+        if graph_store else None
+    )
     retrievers: list[Retriever] = [vector]
     if graph is not None:
         retrievers.append(graph)

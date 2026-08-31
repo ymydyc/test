@@ -133,7 +133,10 @@ class IncrementalSync:
         return False
 
     def _rebuild_note(self, db: Session, rel: str, content: str) -> None:
-        """外部变更了笔记文件 → 更新 MySQL 内容 + 重建向量/图谱（局部更新）。"""
+        """外部变更了笔记文件 → 更新 MySQL 内容 + 重建向量（局部更新）。
+
+        图谱构建由用户显式点击"重建图谱"触发，不在此处自动构建。
+        """
         note = db.query(KbNote).filter(KbNote.note_path == rel).first()
         if note is None:
             return
@@ -148,7 +151,8 @@ class IncrementalSync:
         for i, c in enumerate(raw):
             row = DocChunk(note_id=note.id, chunk_index=i, chunk_text=c["text"],
                            char_start=c["start"], char_end=c["end"],
-                           parent_chunk_id=None, chroma_id=None)
+                           parent_chunk_id=None, chroma_id=None,
+                           workspace_id=note.workspace_id)
             rows.append(row)
             db.add(row)
         db.flush()  # 生成自增 id，用于父子块回填
@@ -158,10 +162,10 @@ class IncrementalSync:
             if pid is not None:
                 rows[i].parent_chunk_id = id_by_idx[pid]
         db.flush()
-        # 同步向量 + 图谱（异常不影响主流程）
+        # 同步向量（异常不影响主流程）
         try:
+            self._graph_service.workspace_id = note.workspace_id
             self._graph_service.build_note_vectors(db, note.id)
-            self._graph_service.build_note_graph(db, note.id)
         except Exception as e:
             log.warning("增量重建失败（note=%s）：%s", note.id, e)
         log.info("外部变更已同步：%s", rel)
